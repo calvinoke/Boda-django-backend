@@ -1,37 +1,41 @@
 from django.db import models
-from accounts.models import User
+from django.conf import settings
+
+User = settings.AUTH_USER_MODEL
+
 
 class SecurityAlert(models.Model):
 
-    ALERT_TYPES = (
+    SEVERITY = (
 
-        ('login_anomaly', 'Login Anomaly'),
+        ('low', 'Low'),
 
-        ('location_spoof', 'Location Spoofing'),
+        ('medium', 'Medium'),
 
-        ('multiple_accounts', 'Multiple Accounts'),
+        ('high', 'High'),
 
-        ('suspicious_activity', 'Suspicious Activity'),
+        ('critical', 'Critical'),
     )
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='security_alerts'
+    )
 
-    alert_type = models.CharField(max_length=50, choices=ALERT_TYPES)
-
-    description = models.TextField()
+    reason = models.TextField()
 
     severity = models.CharField(
         max_length=20,
-        default='medium'
+        choices=SEVERITY,
+        db_index=True
     )
+
+    auto_flagged = models.BooleanField(default=False)
+
+    resolved = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-
-        indexes = [
-
-            models.Index(fields=['alert_type']),
-
-            models.Index(fields=['severity']),
-        ]
+    def __str__(self):
+        return f"{self.user.username} - {self.severity}"

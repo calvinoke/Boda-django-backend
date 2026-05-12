@@ -2,19 +2,64 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.core.validators import RegexValidator
 
+
+# =========================================================
+# VALIDATORS
+# =========================================================
+
 phone_validator = RegexValidator(
     regex=r'^\+256[0-9]{9}$',
     message='Phone number must be in format: +2567XXXXXXXX'
 )
 
+
+# =========================================================
+# CUSTOM USER MODEL
+# =========================================================
+
 class User(AbstractUser):
 
     ROLE_CHOICES = (
+
+        ('super_admin', 'Super Admin'),
+
+        ('stage_chairman', 'Stage Chairman'),
+
+        ('stage_secretary', 'Stage Secretary'),
+
+        ('stage_defense', 'Stage Defense'),
+
         ('rider', 'Rider'),
-        ('admin', 'Admin'),
+
+        ('guest_rider', 'Guest Rider'),
     )
 
-    email = models.EmailField(unique=True, db_index=True)
+    # =====================================================
+    # REMOVE EMAIL REQUIREMENT
+    # =====================================================
+
+    email = models.EmailField(
+        blank=True,
+        null=True
+    )
+
+    # =====================================================
+    # BASIC INFORMATION
+    # =====================================================
+
+    first_name = models.CharField(
+        max_length=150
+    )
+
+    last_name = models.CharField(
+        max_length=150
+    )
+
+    username = models.CharField(
+        max_length=150,
+        unique=True,
+        db_index=True
+    )
 
     phone_number = models.CharField(
         max_length=15,
@@ -24,25 +69,59 @@ class User(AbstractUser):
     )
 
     role = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=ROLE_CHOICES,
-        default='rider',
+        default='guest_rider',
         db_index=True
     )
 
+    # =====================================================
+    # SECURITY
+    # =====================================================
+
     is_verified = models.BooleanField(default=False)
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username']
+    is_active = models.BooleanField(default=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    # =====================================================
+    # TIMESTAMPS
+    # =====================================================
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+
+    # =====================================================
+    # AUTH SETTINGS
+    # =====================================================
+
+    USERNAME_FIELD = 'username'
+
+    REQUIRED_FIELDS = ['phone_number']
+
+    # =====================================================
+    # INDEXES
+    # =====================================================
 
     class Meta:
+
         indexes = [
-            models.Index(fields=['email']),
+
+            models.Index(fields=['username']),
+
             models.Index(fields=['phone_number']),
+
             models.Index(fields=['role']),
         ]
 
+    # =====================================================
+    # STRING REPRESENTATION
+    # =====================================================
+
     def __str__(self):
-        return self.email
+
+        return f"{self.username} - {self.role}"

@@ -1,67 +1,267 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
-from .models import RiderProfile
-from .serializers import RiderProfileSerializer
 
-class RiderProfileViewSet(viewsets.ModelViewSet):
+from .models import (
+    RiderProfile,
+    RiderDetails,
+    GuestRider
+)
 
-    serializer_class = RiderProfileSerializer
+from .serializers import (
 
-    permission_classes = [IsAuthenticated]
+    RiderProfileSerializer,
+    RiderSelfUpdateSerializer,
 
-    def get_queryset(self):
+    RiderDetailsSerializer,
 
-        queryset = RiderProfile.objects.select_related(
-            'user'
-        ).all()
+    GuestRiderSerializer
+)
 
-        stage = self.request.query_params.get('stage')
+from accounts.permissions import (
 
-        status = self.request.query_params.get('status')
+    IsManagementRole,
 
-        if stage:
-            queryset = queryset.filter(stage_name__icontains=stage)
+    IsManagementOrOwner,
 
-        if status:
-            queryset = queryset.filter(status=status)
-
-        return queryset
+    IsRiderSelfUpdate,
+)
     
 
-from rest_framework import viewsets
-from django.db.models import Q
-from .models import RiderProfile
-from .serializers import RiderProfileSerializer
+# =========================================================
+# RIDER PROFILE VIEWSET
+# =========================================================
 
 class RiderProfileViewSet(viewsets.ModelViewSet):
 
-    serializer_class = RiderProfileSerializer
+    queryset = RiderProfile.objects.select_related(
+        'user',
+        'stage'
+    ).prefetch_related(
+        'details'
+    )
+
+    filterset_fields = [
+
+        'status',
+        'is_verified',
+        'is_blacklisted',
+        'stage',
+    ]
+
+    search_fields = [
+
+        'bike_plate_number',
+
+        'national_id_number',
+
+        'rider_phone_number',
+
+        'user__username',
+
+        'user__first_name',
+
+        'user__last_name',
+    ]
+
+    ordering_fields = [
+        'created_at',
+    ]
+
+    ordering = ['-created_at']
+
+    # =====================================================
+    # QUERYSET SECURITY
+    # =====================================================
 
     def get_queryset(self):
 
-        queryset = RiderProfile.objects.select_related('user')
+        user = self.request.user
 
-        search = self.request.query_params.get('search')
+        queryset = self.queryset
 
-        stage = self.request.query_params.get('stage')
+        # MANAGEMENT
+        if user.role in [
 
-        status = self.request.query_params.get('status')
+            'super_admin',
 
-        if search:
+            'stage_chairman',
 
-            queryset = queryset.filter(
+            'stage_secretary',
 
-                Q(bike_plate_number__icontains=search) |
-                Q(stage_name__icontains=search) |
-                Q(village_name__icontains=search) |
-                Q(user__email__icontains=search) |
-                Q(user__phone_number__icontains=search)
-            )
+            'stage_defense'
+        ]:
+            return queryset
 
-        if stage:
-            queryset = queryset.filter(stage_name__icontains=stage)
+        # RIDER ONLY OWN PROFILE
+        return queryset.filter(user=user)
 
-        if status:
-            queryset = queryset.filter(status=status)
+    # =====================================================
+    # SERIALIZER CONTROL
+    # =====================================================
 
-        return queryset
+    def get_serializer_class(self):
+
+        if (
+
+            self.request.user.role == 'rider' and
+
+            self.action in ['update', 'partial_update']
+        ):
+            return RiderSelfUpdateSerializer
+
+        return RiderProfileSerializer
+
+    # =====================================================
+    # PERMISSIONS
+    # =====================================================
+
+    def get_permissions(self):
+
+        # MANAGEMENT FULL CRUD
+        if self.request.user.role in [
+
+            'super_admin',
+
+            'stage_chairman',
+
+            'stage_secretary',
+
+            'stage_defense'
+        ]:
+            return [IsAuthenticated()]
+
+        # RIDER SELF ACCESS
+        if self.request.user.role == 'rider':
+            return [IsRiderSelfUpdate()]
+
+        # GUEST RIDER READ ONLY
+        return [IsAuthenticated()]
+
+
+# =========================================================
+# RIDER DETAILS VIEWSET
+# =========================================================
+
+class RiderDetailsViewSet(viewsets.ModelViewSet):
+
+    serializer_class = RiderDetailsSerializer
+
+    queryset = RiderDetails.objects.select_related(
+        'rider',
+        'rider__user'
+    )
+
+    # =====================================================
+    # QUERYSET SECURITY
+    # =====================================================
+
+    def get_queryset(self):
+
+        user = self.request.user
+
+        if user.role in [
+
+            'super_admin',
+
+            'stage_chairman',
+
+            'stage_secretary',
+
+            'stage_defense'
+        ]:
+            return self.queryset
+
+        return self.queryset.filter(
+            rider__user=user
+        )
+
+    # =====================================================
+    # PERMISSIONS
+    # =====================================================
+
+    def get_permissions(self):
+
+        return [IsAuthenticated()]
+
+    # =====================================================
+    # AUTO LINK RIDER
+    # =====================================================
+
+    def perform_create(self, serializer):
+
+        rider_profile = RiderProfile.objects.get(
+            user=self.request.user
+        )
+
+        serializer.save(
+            rider=rider_profile
+        )
+
+
+# =========================================================
+# GUEST RIDER VIEWSET
+# =========================================================
+
+class GuestRiderViewSet(viewsets.ModelViewSet):
+
+    queryset = GuestRider.objects.select_related(
+        'user'
+    )
+
+    serializer_class = GuestRiderSerializer
+
+    filterset_fields = [
+
+        'status',
+
+        'is_blacklisted',
+
+        'current_area',
+    ]
+
+    search_fields = [
+
+        'bike_plate_number',
+
+        'national_id_number',
+
+        'phone_number',
+
+        'user__username',
+    ]
+
+    ordering = ['-created_at']
+
+    # =====================================================
+    # QUERYSET SECURITY
+    # =====================================================
+
+    def get_queryset(self):
+
+        user = self.request.user
+
+        # MANAGEMENT
+        if user.role in [
+
+            'super_admin',
+
+            'stage_chairman',
+
+            'stage_secretary',
+
+            'stage_defense'
+        ]:
+            return self.queryset
+
+        # GUEST RIDER ONLY OWN RECORD
+        return self.queryset.filter(
+            user=user
+        )
+
+    # =====================================================
+    # PERMISSIONS
+    # =====================================================
+
+    def get_permissions(self):
+
+        return [IsAuthenticated()]

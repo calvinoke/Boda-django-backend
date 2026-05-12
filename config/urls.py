@@ -18,44 +18,40 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
+
     path('admin/', admin.site.urls),
 
-    # Auth
+    # =====================================================
+    # API ROUTES
+    # =====================================================
+
     path('api/accounts/', include('accounts.urls')),
 
-    # JWT
-    path('api/token/', TokenObtainPairView.as_view()),
-    path('api/token/refresh/', TokenRefreshView.as_view()),
-
-    # Apps
     path('api/riders/', include('riders.urls')),
-    path('api/contacts/', include('contacts.urls')),
-    path('api/verification/', include('verification.urls')),
+
     path('api/location/', include('location.urls')),
+
+    path('api/verification/', include('verification.urls')),
+
     path('api/announcements/', include('announcements.urls')),
-    path('api/adminpanel/', include('adminpanel.urls')),
+
+    path('api/notifications/', include('notifications.urls')),
+    # STAGES APP (NEW)
+    path('api/stages', include('stages.urls')),
+    path('api/fines/', include('fines.urls')),
+    path('api/location/', include('location.urls')),
+    path('api/tracking/', include('tracking.urls')),
 ]
 
-from django.contrib import admin
-from django.urls import path, include
+# MEDIA FILES
+if settings.DEBUG:
 
-urlpatterns = [
-
-    path('admin/', admin.site.urls),
-
-    path('api/v1/auth/', include('accounts.urls')),
-
-    path('api/v1/', include('riders.urls')),
-
-    path('api/v1/', include('contacts.urls')),
-
-    path('api/v1/', include('verification.urls')),
-
-    path(
-    'api/v1/admin/',
-    include('adminpanel.urls')
-),
-]
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDIA_ROOT
+    )

@@ -106,6 +106,14 @@ class Condolence(models.Model):
         db_index=True
     )
 
+    target_role = models.CharField(
+    max_length=30,
+    choices=User.ROLE_CHOICES,
+    null=True,
+    blank=True,
+    db_index=True
+)
+
     verified_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
