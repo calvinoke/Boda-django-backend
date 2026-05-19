@@ -45,7 +45,7 @@ urlpatterns = [
     path('api/stages', include('stages.urls')),
     path('api/fines/', include('fines.urls')),
     path('api/location/', include('location.urls')),
-    path('api/tracking/', include('tracking.urls')),
+    path('api/security/', include('security.urls')),
 ]
 
 # MEDIA FILES

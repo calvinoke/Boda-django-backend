@@ -29,11 +29,10 @@ ALLOWED_HOSTS = os.getenv(
 ).split(",")
 
 # =========================================================
-# DJANGO APPLICATIONS
+# DJANGO APPS
 # =========================================================
 
 DJANGO_APPS = [
-
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -43,35 +42,34 @@ DJANGO_APPS = [
 ]
 
 # =========================================================
-# THIRD PARTY APPLICATIONS
+# THIRD PARTY APPS
 # =========================================================
 
 THIRD_PARTY_APPS = [
 
-    # REST API
+    # REST FRAMEWORK
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
 
-    # Filtering
+    # FILTERING
     'django_filters',
 
     # CORS
     'corsheaders',
 
-    # WebSockets
+    # WEBSOCKETS (CHANNELS)
     'channels',
 
-    # Celery
+    # CELERY RESULTS
     'django_celery_results',
 ]
 
 # =========================================================
-# LOCAL APPLICATIONS
+# LOCAL APPS
 # =========================================================
 
 LOCAL_APPS = [
-
     'accounts',
     'riders',
     'contacts',
@@ -84,50 +82,39 @@ LOCAL_APPS = [
     'security',
     'stages',
     'fines',
-    'tracking',
 ]
 
 # =========================================================
 # INSTALLED APPS
 # =========================================================
 
-INSTALLED_APPS = (
-    DJANGO_APPS
-    + THIRD_PARTY_APPS
-    + LOCAL_APPS
-)
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 # =========================================================
 # MIDDLEWARE
 # =========================================================
 
 MIDDLEWARE = [
-
     'django.middleware.security.SecurityMiddleware',
-
     'corsheaders.middleware.CorsMiddleware',
 
     'django.contrib.sessions.middleware.SessionMiddleware',
-
     'django.middleware.common.CommonMiddleware',
 
     'django.middleware.csrf.CsrfViewMiddleware',
-
     'django.contrib.auth.middleware.AuthenticationMiddleware',
 
     'django.contrib.messages.middleware.MessageMiddleware',
-
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
 # =========================================================
-# URLS / APPLICATION
+# ROOT CONFIG
 # =========================================================
 
 ROOT_URLCONF = 'config.urls'
 
 WSGI_APPLICATION = 'config.wsgi.application'
-
 ASGI_APPLICATION = 'config.asgi.application'
 
 # =========================================================
@@ -137,19 +124,12 @@ ASGI_APPLICATION = 'config.asgi.application'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-
         'DIRS': [],
-
         'APP_DIRS': True,
-
         'OPTIONS': {
-
             'context_processors': [
-
                 'django.template.context_processors.request',
-
                 'django.contrib.auth.context_processors.auth',
-
                 'django.contrib.messages.context_processors.messages',
             ],
         },
@@ -157,28 +137,20 @@ TEMPLATES = [
 ]
 
 # =========================================================
-# DATABASE
+# DATABASE (POSTGRESQL)
 # =========================================================
 
 DATABASES = {
-
     'default': {
-
         'ENGINE': 'django.db.backends.postgresql',
-
         'NAME': os.getenv('DB_NAME'),
-
         'USER': os.getenv('DB_USER'),
-
         'PASSWORD': os.getenv('DB_PASSWORD'),
-
         'HOST': os.getenv('DB_HOST', 'localhost'),
-
         'PORT': os.getenv('DB_PORT', '5432'),
 
-        # DATABASE OPTIMIZATION
+        # PERFORMANCE
         'CONN_MAX_AGE': 60,
-
         'ATOMIC_REQUESTS': True,
     }
 }
@@ -190,79 +162,47 @@ DATABASES = {
 AUTH_USER_MODEL = 'accounts.User'
 
 # =========================================================
-# PASSWORD VALIDATORS
+# PASSWORD VALIDATION
 # =========================================================
 
 AUTH_PASSWORD_VALIDATORS = [
-
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-
-        'OPTIONS': {
-            'min_length': 8,
-        },
-    },
-
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 # =========================================================
-# DJANGO REST FRAMEWORK
+# REST FRAMEWORK
 # =========================================================
 
 REST_FRAMEWORK = {
-
-    # AUTHENTICATION
     'DEFAULT_AUTHENTICATION_CLASSES': (
-
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 
-    # PERMISSIONS
     'DEFAULT_PERMISSION_CLASSES': (
-
         'rest_framework.permissions.IsAuthenticated',
     ),
 
-    # FILTERING
     'DEFAULT_FILTER_BACKENDS': [
-
         'django_filters.rest_framework.DjangoFilterBackend',
-
         'rest_framework.filters.SearchFilter',
-
         'rest_framework.filters.OrderingFilter',
     ],
 
-    # PAGINATION
     'DEFAULT_PAGINATION_CLASS':
-
         'rest_framework.pagination.PageNumberPagination',
 
     'PAGE_SIZE': 20,
 
-    # THROTTLING
     'DEFAULT_THROTTLE_CLASSES': [
-
         'rest_framework.throttling.AnonRateThrottle',
-
         'rest_framework.throttling.UserRateThrottle',
     ],
 
     'DEFAULT_THROTTLE_RATES': {
-
         'anon': '100/day',
-
         'user': '1000/day',
     }
 }
@@ -272,80 +212,70 @@ REST_FRAMEWORK = {
 # =========================================================
 
 SIMPLE_JWT = {
-
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 
     'ROTATE_REFRESH_TOKENS': True,
-
     'BLACKLIST_AFTER_ROTATION': True,
-
     'UPDATE_LAST_LOGIN': True,
 
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 # =========================================================
-# CORS SETTINGS
+# CORS
 # =========================================================
 
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 CORS_ALLOWED_ORIGINS = [
-
     "http://localhost:3000",
-
     "http://127.0.0.1:3000",
 ]
 
 # =========================================================
-# CHANNELS (WEBSOCKETS)
+# REDIS CONFIG
 # =========================================================
 
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 
+# =========================================================
+# CHANNELS (WEBSOCKETS) ✅ FIXED
+# =========================================================
+
 CHANNEL_LAYERS = {
-
     'default': {
-
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
-
         'CONFIG': {
-
             'hosts': [(REDIS_HOST, int(REDIS_PORT))],
         },
     },
 }
 
 # =========================================================
-# CELERY CONFIGURATION
+# CELERY CONFIG (PRODUCTION READY) ✅ FIXED
 # =========================================================
 
 CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 
-CELERY_RESULT_BACKEND = 'django-db'
+# Better than django-db (faster + scalable)
+CELERY_RESULT_BACKEND = f"redis://{REDIS_HOST}:{REDIS_PORT}/1"
 
 CELERY_ACCEPT_CONTENT = ['json']
-
 CELERY_TASK_SERIALIZER = 'json'
-
 CELERY_RESULT_SERIALIZER = 'json'
 
 CELERY_TIMEZONE = 'Africa/Kampala'
+CELERY_ENABLE_UTC = False
 
 # =========================================================
-# REDIS CACHE
+# CACHE (REDIS) ✅ FIXED
 # =========================================================
 
 CACHES = {
-
     "default": {
-
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-
         "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1",
     }
 }
@@ -355,31 +285,23 @@ CACHES = {
 # =========================================================
 
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'Africa/Kampala'
 
 USE_I18N = True
-
 USE_TZ = True
 
 # =========================================================
-# STATIC FILES
+# STATIC / MEDIA
 # =========================================================
 
 STATIC_URL = '/static/'
-
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# =========================================================
-# MEDIA FILES
-# =========================================================
-
 MEDIA_URL = '/media/'
-
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # =========================================================
-# DEFAULT PRIMARY KEY
+# PRIMARY KEY
 # =========================================================
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -389,69 +311,46 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # =========================================================
 
 LOGGING = {
-
     'version': 1,
-
     'disable_existing_loggers': False,
 
     'formatters': {
-
         'verbose': {
-
             'format': '{levelname} {asctime} {module} {message}',
-
             'style': '{',
         },
     },
 
     'handlers': {
-
         'console': {
-
             'class': 'logging.StreamHandler',
-
             'formatter': 'verbose',
         },
     },
 
     'root': {
-
         'handlers': ['console'],
-
         'level': 'INFO',
     },
 }
 
 # =========================================================
-# SECURITY SETTINGS
+# SECURITY
 # =========================================================
 
 SESSION_COOKIE_SECURE = False
-
 CSRF_COOKIE_SECURE = False
 
 SECURE_BROWSER_XSS_FILTER = True
-
 SECURE_CONTENT_TYPE_NOSNIFF = True
-
 X_FRAME_OPTIONS = 'DENY'
-
-# =========================================================
-# PRODUCTION ONLY
-# =========================================================
-
-# SECURE_SSL_REDIRECT = True
-# SESSION_COOKIE_SECURE = True
-# CSRF_COOKIE_SECURE = True
 
 # =========================================================
 # ELASTICSEARCH
 # =========================================================
 
 ELASTICSEARCH_DSL = {
-
     'default': {
-
         'hosts': 'localhost:9200',
     },
 }

@@ -4,26 +4,32 @@ from accounts.serializers import UserSerializer
 
 
 # =========================================================
-# STAGE SERIALIZER
+# READ SERIALIZER
 # =========================================================
 
 class StageSerializer(serializers.ModelSerializer):
 
     chairman = UserSerializer(read_only=True)
+
     secretary = UserSerializer(read_only=True)
+
     defense = UserSerializer(read_only=True)
 
     class Meta:
+
         model = Stage
+
         fields = '__all__'
 
 
 # =========================================================
-# STAGE CREATE / UPDATE SERIALIZER (ADMIN ONLY)
+# CREATE / UPDATE SERIALIZER
 # =========================================================
 
 class StageCreateUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
+
         model = Stage
+
         fields = '__all__'

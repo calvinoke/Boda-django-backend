@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import RegexValidator
 
+
 User = settings.AUTH_USER_MODEL
 
 
@@ -20,10 +21,6 @@ phone_validator = RegexValidator(
 # =========================================================
 
 class Stage(models.Model):
-
-    # =====================================================
-    # BASIC INFORMATION
-    # =====================================================
 
     name = models.CharField(
         max_length=255,
@@ -51,19 +48,13 @@ class Stage(models.Model):
         db_index=True
     )
 
-    # =====================================================
-    # STAGE LEADERSHIP USERS
-    # =====================================================
-
     chairman = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='chairman_stages',
-        limit_choices_to={
-            'role': 'stage_chairman'
-        }
+        limit_choices_to={'role': 'stage_chairman'}
     )
 
     secretary = models.ForeignKey(
@@ -72,9 +63,7 @@ class Stage(models.Model):
         null=True,
         blank=True,
         related_name='secretary_stages',
-        limit_choices_to={
-            'role': 'stage_secretary'
-        }
+        limit_choices_to={'role': 'stage_secretary'}
     )
 
     defense = models.ForeignKey(
@@ -83,14 +72,8 @@ class Stage(models.Model):
         null=True,
         blank=True,
         related_name='defense_stages',
-        limit_choices_to={
-            'role': 'stage_defense'
-        }
+        limit_choices_to={'role': 'stage_defense'}
     )
-
-    # =====================================================
-    # CONTACT BACKUP (OPTIONAL)
-    # =====================================================
 
     chairman_phone = models.CharField(
         max_length=15,
@@ -106,10 +89,6 @@ class Stage(models.Model):
         max_length=15,
         validators=[phone_validator]
     )
-
-    # =====================================================
-    # GPS LOCATION
-    # =====================================================
 
     latitude = models.DecimalField(
         max_digits=9,
@@ -127,34 +106,16 @@ class Stage(models.Model):
         db_index=True
     )
 
-    # =====================================================
-    # STATUS
-    # =====================================================
-
     is_active = models.BooleanField(
         default=True,
         db_index=True
     )
 
-    # =====================================================
-    # SECURITY ANALYTICS
-    # =====================================================
+    total_registered_riders = models.PositiveIntegerField(default=0)
 
-    total_registered_riders = models.PositiveIntegerField(
-        default=0
-    )
+    total_guest_riders_seen = models.PositiveIntegerField(default=0)
 
-    total_guest_riders_seen = models.PositiveIntegerField(
-        default=0
-    )
-
-    suspicious_activity_score = models.IntegerField(
-        default=0
-    )
-
-    # =====================================================
-    # TIMESTAMPS
-    # =====================================================
+    suspicious_activity_score = models.IntegerField(default=0)
 
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -164,10 +125,6 @@ class Stage(models.Model):
     updated_at = models.DateTimeField(
         auto_now=True
     )
-
-    # =====================================================
-    # META
-    # =====================================================
 
     class Meta:
 
@@ -189,10 +146,6 @@ class Stage(models.Model):
 
             models.Index(fields=['latitude', 'longitude']),
         ]
-
-    # =====================================================
-    # STRING
-    # =====================================================
 
     def __str__(self):
 

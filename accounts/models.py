@@ -1,17 +1,19 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.core.validators import RegexValidator
-
+from django.core.validators import (
+    RegexValidator
+)
 
 # =========================================================
 # VALIDATORS
 # =========================================================
 
 phone_validator = RegexValidator(
+
     regex=r'^\+256[0-9]{9}$',
+
     message='Phone number must be in format: +2567XXXXXXXX'
 )
-
 
 # =========================================================
 # CUSTOM USER MODEL
@@ -35,12 +37,24 @@ class User(AbstractUser):
     )
 
     # =====================================================
-    # REMOVE EMAIL REQUIREMENT
+    # EMAIL OPTIONAL
     # =====================================================
 
+    # Used only for:
+    # - notifications
+    # - messages
+    # - password recovery
+    # NOT for login
+
     email = models.EmailField(
+
+        unique=True,
+
+        null=True,
+
         blank=True,
-        null=True
+
+        db_index=True
     )
 
     # =====================================================
@@ -56,32 +70,47 @@ class User(AbstractUser):
     )
 
     username = models.CharField(
+
         max_length=150,
+
         unique=True,
+
         db_index=True
     )
 
     phone_number = models.CharField(
+
         max_length=15,
+
         unique=True,
+
         validators=[phone_validator],
+
         db_index=True
     )
 
     role = models.CharField(
+
         max_length=30,
+
         choices=ROLE_CHOICES,
+
         default='guest_rider',
+
         db_index=True
     )
 
     # =====================================================
-    # SECURITY
+    # ACCOUNT SECURITY
     # =====================================================
 
-    is_verified = models.BooleanField(default=False)
+    is_verified = models.BooleanField(
+        default=False
+    )
 
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(
+        default=True
+    )
 
     # =====================================================
     # TIMESTAMPS
@@ -96,18 +125,21 @@ class User(AbstractUser):
     )
 
     # =====================================================
-    # AUTH SETTINGS
+    # AUTHENTICATION
     # =====================================================
 
+    # LOGIN USING USERNAME
     USERNAME_FIELD = 'username'
 
     REQUIRED_FIELDS = ['phone_number']
 
     # =====================================================
-    # INDEXES
+    # MODEL INDEXES
     # =====================================================
 
     class Meta:
+
+        ordering = ['-created_at']
 
         indexes = [
 
@@ -116,6 +148,8 @@ class User(AbstractUser):
             models.Index(fields=['phone_number']),
 
             models.Index(fields=['role']),
+
+            models.Index(fields=['email']),
         ]
 
     # =====================================================

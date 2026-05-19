@@ -1,11 +1,15 @@
-from rest_framework import generics, viewsets
+
+from rest_framework import (
+    generics,
+    viewsets
+)
 from rest_framework.permissions import (
+
     AllowAny,
+
     IsAuthenticated
 )
-
 from .models import User
-
 from .serializers import (
 
     RegisterSerializer,
@@ -16,22 +20,46 @@ from .serializers import (
 )
 
 from .permissions import (
-
     IsManagementRole,
+)
+
+from .tasks import (
+
+    broadcast_user_event,
+
+    refresh_users_cache
 )
 
 
 # =========================================================
-# REGISTER
+# REGISTER VIEW
 # =========================================================
 
-class RegisterView(generics.CreateAPIView):
+class RegisterView(
+
+    generics.CreateAPIView
+):
 
     queryset = User.objects.all()
 
     serializer_class = RegisterSerializer
 
     permission_classes = [AllowAny]
+
+    def perform_create(self, serializer):
+
+        user = serializer.save()
+
+        # =================================================
+        # CELERY + REDIS + WEBSOCKETS
+        # =================================================
+
+        broadcast_user_event.delay(
+
+            f"New user registered: {user.username}"
+        )
+
+        refresh_users_cache.delay()
 
 
 # =========================================================
@@ -40,7 +68,9 @@ class RegisterView(generics.CreateAPIView):
 
 class UserViewSet(viewsets.ModelViewSet):
 
-    queryset = User.objects.all().order_by('-created_at')
+    queryset = User.objects.all().order_by(
+        '-created_at'
+    )
 
     permission_classes = [IsAuthenticated]
 
@@ -56,6 +86,8 @@ class UserViewSet(viewsets.ModelViewSet):
         'username',
 
         'phone_number',
+
+        'email',
     ]
 
     ordering_fields = [
@@ -73,7 +105,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
         user = self.request.user
 
-        # MANAGEMENT CAN VIEW ALL USERS
+        # MANAGEMENT USERS
         if user.role in [
 
             'super_admin',
@@ -86,8 +118,10 @@ class UserViewSet(viewsets.ModelViewSet):
         ]:
             return User.objects.all()
 
-        # RIDERS + GUESTS SEE OWN ACCOUNT ONLY
-        return User.objects.filter(id=user.id)
+        # NORMAL USERS
+        return User.objects.filter(
+            id=user.id
+        )
 
     # =====================================================
     # SERIALIZER CONTROL
@@ -97,7 +131,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
         user = self.request.user
 
-        # RIDERS CAN UPDATE LIMITED FIELDS
         if user.role == 'rider':
 
             if self.action in [
@@ -116,7 +149,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
 
-        # MANAGEMENT FULL CRUD
         if self.request.user.role in [
 
             'super_admin',
@@ -129,12 +161,10 @@ class UserViewSet(viewsets.ModelViewSet):
         ]:
             return [IsAuthenticated()]
 
-        # RIDER LIMITED ACCESS
         if self.request.user.role == 'rider':
 
             return [IsAuthenticated()]
 
-        # GUEST RIDER VIEW ONLY
         if self.request.user.role == 'guest_rider':
 
             if self.action in [

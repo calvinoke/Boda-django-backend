@@ -1,7 +1,10 @@
 from rest_framework import serializers
-from .models import Announcement, Condolence
+from .models import (Announcement,Condolence)
 
-class AnnouncementSerializer(serializers.ModelSerializer):
+
+class AnnouncementSerializer(
+    serializers.ModelSerializer
+):
 
     created_by_email = serializers.EmailField(
         source='created_by.email',
@@ -15,10 +18,17 @@ class AnnouncementSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class CondolenceSerializer(serializers.ModelSerializer):
+class CondolenceSerializer(
+    serializers.ModelSerializer
+):
 
     rider_email = serializers.EmailField(
         source='rider.user.email',
+        read_only=True
+    )
+
+    reported_by_email = serializers.EmailField(
+        source='reported_by.email',
         read_only=True
     )
 

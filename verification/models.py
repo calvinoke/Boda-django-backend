@@ -1,5 +1,14 @@
 from django.db import models
+from django.conf import settings
 from riders.models import RiderProfile
+
+
+User = settings.AUTH_USER_MODEL
+
+
+# =========================================================
+# RIDER VERIFICATION MODEL
+# =========================================================
 
 class RiderVerification(models.Model):
 
@@ -35,10 +44,11 @@ class RiderVerification(models.Model):
     )
 
     verified_by = models.ForeignKey(
-        'accounts.User',
+        User,
         on_delete=models.SET_NULL,
         null=True,
-        blank=True
+        blank=True,
+        related_name='verified_riders'
     )
 
     verified_at = models.DateTimeField(
@@ -46,25 +56,30 @@ class RiderVerification(models.Model):
         blank=True
     )
 
-    submitted_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True
+    )
 
     class Meta:
+
+        ordering = ['-submitted_at']
 
         indexes = [
 
             models.Index(fields=['is_verified']),
+
+            models.Index(fields=['submitted_at']),
         ]
 
     def __str__(self):
 
-        return f"Verification - {self.rider.user.email}"
-    
+        return f"Verification - {self.rider.user.username}"
 
-from django.db import models
-from django.conf import settings
 
-User = settings.AUTH_USER_MODEL
-
+# =========================================================
+# VERIFICATION REQUEST MODEL
+# =========================================================
 
 class VerificationRequest(models.Model):
 
@@ -87,6 +102,7 @@ class VerificationRequest(models.Model):
         User,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name='submitted_verifications'
     )
 
@@ -97,6 +113,27 @@ class VerificationRequest(models.Model):
         db_index=True
     )
 
-    notes = models.TextField(null=True, blank=True)
+    notes = models.TextField(
+        null=True,
+        blank=True
+    )
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True
+    )
+
+    class Meta:
+
+        ordering = ['-created_at']
+
+        indexes = [
+
+            models.Index(fields=['status']),
+
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+
+        return f"{self.user.username} - {self.status}"

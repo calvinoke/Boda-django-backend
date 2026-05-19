@@ -3,6 +3,7 @@ from django.conf import settings
 
 User = settings.AUTH_USER_MODEL
 
+
 class Notification(models.Model):
 
     NOTIFICATION_TYPES = (
@@ -61,4 +62,4 @@ class Notification(models.Model):
 
     def __str__(self):
 
-        return self.title
+        return f"{self.user.username} - {self.title}"

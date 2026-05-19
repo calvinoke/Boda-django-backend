@@ -1,32 +1,61 @@
+from django.core.cache import cache
 from rest_framework.views import APIView
-from rest_framework.response import Response
-from riders.models import RiderProfile
-from verification.models import RiderVerification
-from announcements.models import Announcement
+from rest_framework.response import (Response)
+from rest_framework.permissions import (IsAuthenticated)
+from rest_framework import viewsets
+from .models import AuditLog
+from .serializers import (
+    AuditLogSerializer
+)
+from .services import (
+    cache_system_stats
+)
 
-class SystemStatsAPIView(APIView):
 
-    def get(self, request):
+# =========================================================
+# SYSTEM STATS API
+# =========================================================
 
-        total_riders = RiderProfile.objects.count()
+class SystemStatsAPIView(
+    APIView
+):
 
-        approved_riders = RiderProfile.objects.filter(status='approved').count()
+    permission_classes = [
+        IsAuthenticated
+    ]
 
-        pending_riders = RiderProfile.objects.filter(status='pending').count()
+    def get(
+        self,
+        request
+    ):
 
-        suspended_riders = RiderProfile.objects.filter(status='suspended').count()
+        stats = cache.get(
+            "system_stats"
+        )
 
-        verified_riders = RiderVerification.objects.filter(is_verified=True).count()
+        if not stats:
 
-        return Response({
+            stats = cache_system_stats()
 
-            "total_riders": total_riders,
+        return Response(stats)
 
-            "approved_riders": approved_riders,
 
-            "pending_riders": pending_riders,
+# =========================================================
+# AUDIT LOG VIEWSET
+# =========================================================
 
-            "suspended_riders": suspended_riders,
+class AuditLogViewSet(
+    viewsets.ReadOnlyModelViewSet
+):
 
-            "verified_riders": verified_riders,
-        })
+    queryset = AuditLog.objects.select_related(
+        'user'
+    )
+
+    serializer_class = (
+        AuditLogSerializer
+    )
+
+    permission_classes = [
+        IsAuthenticated
+    ]

@@ -1,5 +1,14 @@
+from django.core.cache import cache
+
 from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated
+
+from rest_framework.permissions import (
+    IsAuthenticated
+)
+
+from rest_framework.decorators import action
+
+from rest_framework.response import Response
 
 from .models import (
     RiderProfile,
@@ -10,76 +19,42 @@ from .models import (
 from .serializers import (
 
     RiderProfileSerializer,
-    RiderSelfUpdateSerializer,
 
     RiderDetailsSerializer,
 
     GuestRiderSerializer
 )
 
-from accounts.permissions import (
+from .tasks import (
 
-    IsManagementRole,
+    refresh_riders_cache,
 
-    IsManagementOrOwner,
+    refresh_guest_riders_cache,
 
-    IsRiderSelfUpdate,
+    set_rider_online_status
 )
-    
+
 
 # =========================================================
 # RIDER PROFILE VIEWSET
 # =========================================================
 
-class RiderProfileViewSet(viewsets.ModelViewSet):
+class RiderProfileViewSet(
+    viewsets.ModelViewSet
+):
 
-    queryset = RiderProfile.objects.select_related(
-        'user',
-        'stage'
-    ).prefetch_related(
-        'details'
+    serializer_class = (
+        RiderProfileSerializer
     )
 
-    filterset_fields = [
-
-        'status',
-        'is_verified',
-        'is_blacklisted',
-        'stage',
+    permission_classes = [
+        IsAuthenticated
     ]
-
-    search_fields = [
-
-        'bike_plate_number',
-
-        'national_id_number',
-
-        'rider_phone_number',
-
-        'user__username',
-
-        'user__first_name',
-
-        'user__last_name',
-    ]
-
-    ordering_fields = [
-        'created_at',
-    ]
-
-    ordering = ['-created_at']
-
-    # =====================================================
-    # QUERYSET SECURITY
-    # =====================================================
 
     def get_queryset(self):
 
         user = self.request.user
 
-        queryset = self.queryset
-
-        # MANAGEMENT
         if user.role in [
 
             'super_admin',
@@ -90,70 +65,115 @@ class RiderProfileViewSet(viewsets.ModelViewSet):
 
             'stage_defense'
         ]:
-            return queryset
 
-        # RIDER ONLY OWN PROFILE
-        return queryset.filter(user=user)
+            return RiderProfile.objects.all()
 
-    # =====================================================
-    # SERIALIZER CONTROL
-    # =====================================================
-
-    def get_serializer_class(self):
-
-        if (
-
-            self.request.user.role == 'rider' and
-
-            self.action in ['update', 'partial_update']
-        ):
-            return RiderSelfUpdateSerializer
-
-        return RiderProfileSerializer
+        return RiderProfile.objects.filter(
+            user=user
+        )
 
     # =====================================================
-    # PERMISSIONS
+    # ONLINE STATUS
     # =====================================================
 
-    def get_permissions(self):
+    @action(
+        detail=True,
+        methods=['post']
+    )
+    def set_online(
+        self,
+        request,
+        pk=None
+    ):
 
-        # MANAGEMENT FULL CRUD
-        if self.request.user.role in [
+        set_rider_online_status.delay(
+            pk,
+            True
+        )
 
-            'super_admin',
+        return Response({
 
-            'stage_chairman',
+            "message":
+            "Rider set online"
+        })
 
-            'stage_secretary',
+    @action(
+        detail=True,
+        methods=['post']
+    )
+    def set_offline(
+        self,
+        request,
+        pk=None
+    ):
 
-            'stage_defense'
-        ]:
-            return [IsAuthenticated()]
+        set_rider_online_status.delay(
+            pk,
+            False
+        )
 
-        # RIDER SELF ACCESS
-        if self.request.user.role == 'rider':
-            return [IsRiderSelfUpdate()]
+        return Response({
 
-        # GUEST RIDER READ ONLY
-        return [IsAuthenticated()]
+            "message":
+            "Rider set offline"
+        })
+
+    # =====================================================
+    # CACHED RIDERS
+    # =====================================================
+
+    @action(
+        detail=False,
+        methods=['get']
+    )
+    def cached(
+        self,
+        request
+    ):
+
+        data = cache.get(
+            "active_riders"
+        )
+
+        if not data:
+
+            refresh_riders_cache.delay()
+
+            return Response({
+
+                "message":
+                "Cache rebuilding"
+            })
+
+        return Response(data)
 
 
 # =========================================================
 # RIDER DETAILS VIEWSET
 # =========================================================
 
-class RiderDetailsViewSet(viewsets.ModelViewSet):
+class RiderDetailsViewSet(
+    viewsets.ModelViewSet
+):
 
-    serializer_class = RiderDetailsSerializer
-
-    queryset = RiderDetails.objects.select_related(
-        'rider',
-        'rider__user'
+    serializer_class = (
+        RiderDetailsSerializer
     )
 
-    # =====================================================
-    # QUERYSET SECURITY
-    # =====================================================
+    queryset = RiderDetails.objects.all()
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    def perform_create(
+        self,
+        serializer
+    ):
+
+        serializer.save(
+            rider=self.request.user.rider_profile
+        )
 
     def get_queryset(self):
 
@@ -169,32 +189,11 @@ class RiderDetailsViewSet(viewsets.ModelViewSet):
 
             'stage_defense'
         ]:
+
             return self.queryset
 
         return self.queryset.filter(
             rider__user=user
-        )
-
-    # =====================================================
-    # PERMISSIONS
-    # =====================================================
-
-    def get_permissions(self):
-
-        return [IsAuthenticated()]
-
-    # =====================================================
-    # AUTO LINK RIDER
-    # =====================================================
-
-    def perform_create(self, serializer):
-
-        rider_profile = RiderProfile.objects.get(
-            user=self.request.user
-        )
-
-        serializer.save(
-            rider=rider_profile
         )
 
 
@@ -202,45 +201,22 @@ class RiderDetailsViewSet(viewsets.ModelViewSet):
 # GUEST RIDER VIEWSET
 # =========================================================
 
-class GuestRiderViewSet(viewsets.ModelViewSet):
+class GuestRiderViewSet(
+    viewsets.ModelViewSet
+):
 
-    queryset = GuestRider.objects.select_related(
-        'user'
+    serializer_class = (
+        GuestRiderSerializer
     )
 
-    serializer_class = GuestRiderSerializer
-
-    filterset_fields = [
-
-        'status',
-
-        'is_blacklisted',
-
-        'current_area',
+    permission_classes = [
+        IsAuthenticated
     ]
-
-    search_fields = [
-
-        'bike_plate_number',
-
-        'national_id_number',
-
-        'phone_number',
-
-        'user__username',
-    ]
-
-    ordering = ['-created_at']
-
-    # =====================================================
-    # QUERYSET SECURITY
-    # =====================================================
 
     def get_queryset(self):
 
         user = self.request.user
 
-        # MANAGEMENT
         if user.role in [
 
             'super_admin',
@@ -251,17 +227,34 @@ class GuestRiderViewSet(viewsets.ModelViewSet):
 
             'stage_defense'
         ]:
-            return self.queryset
 
-        # GUEST RIDER ONLY OWN RECORD
-        return self.queryset.filter(
+            return GuestRider.objects.all()
+
+        return GuestRider.objects.filter(
             user=user
         )
 
-    # =====================================================
-    # PERMISSIONS
-    # =====================================================
+    @action(
+        detail=False,
+        methods=['get']
+    )
+    def cached(
+        self,
+        request
+    ):
 
-    def get_permissions(self):
+        data = cache.get(
+            "guest_riders"
+        )
 
-        return [IsAuthenticated()]
+        if not data:
+
+            refresh_guest_riders_cache.delay()
+
+            return Response({
+
+                "message":
+                "Cache rebuilding"
+            })
+
+        return Response(data)

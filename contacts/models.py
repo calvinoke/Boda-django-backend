@@ -1,5 +1,7 @@
 from django.db import models
+
 from riders.models import RiderProfile
+
 
 class EmergencyContact(models.Model):
 
@@ -26,7 +28,9 @@ class EmergencyContact(models.Model):
         related_name='emergency_contacts'
     )
 
-    name = models.CharField(max_length=255)
+    name = models.CharField(
+        max_length=255
+    )
 
     phone_number = models.CharField(
         max_length=15,
@@ -45,15 +49,35 @@ class EmergencyContact(models.Model):
         blank=True
     )
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    is_primary = models.BooleanField(
+        default=False
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
 
     class Meta:
+
+        ordering = ['-created_at']
 
         indexes = [
 
             models.Index(fields=['phone_number']),
 
             models.Index(fields=['relationship']),
+
+            models.Index(fields=['is_active']),
         ]
 
     def __str__(self):

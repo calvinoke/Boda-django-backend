@@ -1,10 +1,11 @@
 from django.urls import re_path
-from .consumers import RiderTrackingConsumer
+
+from .consumers import RiderLocationConsumer
 
 websocket_urlpatterns = [
 
     re_path(
-        r'ws/tracking/$',
-        RiderTrackingConsumer.as_asgi()
+        r"ws/location/$",
+        RiderLocationConsumer.as_asgi()
     ),
 ]

@@ -1,6 +1,7 @@
 from rest_framework import serializers
-from django.contrib.auth.password_validation import validate_password
-
+from django.contrib.auth.password_validation import (
+    validate_password
+)
 from .models import User
 
 
@@ -8,10 +9,15 @@ from .models import User
 # REGISTER SERIALIZER
 # =========================================================
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(
+
+    serializers.ModelSerializer
+):
 
     password = serializers.CharField(
+
         write_only=True,
+
         validators=[validate_password]
     )
 
@@ -28,6 +34,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             'last_name',
 
             'username',
+
+            'email',
 
             'phone_number',
 
@@ -55,9 +63,14 @@ class RegisterSerializer(serializers.ModelSerializer):
 
             username=validated_data['username'],
 
+            email=validated_data.get('email'),
+
             phone_number=validated_data['phone_number'],
 
-            role=validated_data.get('role', 'guest_rider'),
+            role=validated_data.get(
+                'role',
+                'guest_rider'
+            ),
 
             password=validated_data['password']
         )
@@ -69,7 +82,10 @@ class RegisterSerializer(serializers.ModelSerializer):
 # USER SERIALIZER
 # =========================================================
 
-class UserSerializer(serializers.ModelSerializer):
+class UserSerializer(
+
+    serializers.ModelSerializer
+):
 
     class Meta:
 
@@ -84,6 +100,8 @@ class UserSerializer(serializers.ModelSerializer):
             'last_name',
 
             'username',
+
+            'email',
 
             'phone_number',
 
@@ -101,7 +119,10 @@ class UserSerializer(serializers.ModelSerializer):
 # RIDER SELF UPDATE
 # =========================================================
 
-class RiderSelfUpdateSerializer(serializers.ModelSerializer):
+class RiderSelfUpdateSerializer(
+
+    serializers.ModelSerializer
+):
 
     class Meta:
 
@@ -110,6 +131,8 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
         fields = [
 
             'username',
+
+            'email',
 
             'phone_number',
         ]
