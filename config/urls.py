@@ -46,7 +46,11 @@ urlpatterns = [
     path('api/fines/', include('fines.urls')),
     path('api/location/', include('location.urls')),
     path('api/security/', include('security.urls')),
+    path('api/analytics/', include('analytics.urls')),
+    path('api/adminpanel/', include('adminpanel.urls')),
 ]
+
+
 
 # MEDIA FILES
 if settings.DEBUG:
