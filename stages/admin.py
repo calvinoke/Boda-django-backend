@@ -1,4 +1,4 @@
 from django.contrib import admin
-from .models import RiderActivity
+from .models import Stage
 
-admin.site.register(RiderActivity)
+admin.site.register(Stage)

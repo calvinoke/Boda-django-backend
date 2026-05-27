@@ -63,6 +63,7 @@ THIRD_PARTY_APPS = [
 
     # CELERY RESULTS
     'django_celery_results',
+    "django_celery_beat",
 ]
 
 # =========================================================
@@ -241,7 +242,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 
 # =========================================================
-# CHANNELS (WEBSOCKETS) ✅ FIXED
+# CHANNELS (WEBSOCKETS) FIXED
 # =========================================================
 
 CHANNEL_LAYERS = {
@@ -254,7 +255,7 @@ CHANNEL_LAYERS = {
 }
 
 # =========================================================
-# CELERY CONFIG (PRODUCTION READY) ✅ FIXED
+# CELERY CONFIG (PRODUCTION READY) FIXED
 # =========================================================
 
 CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
@@ -270,7 +271,7 @@ CELERY_TIMEZONE = 'Africa/Kampala'
 CELERY_ENABLE_UTC = False
 
 # =========================================================
-# CACHE (REDIS) ✅ FIXED
+# CACHE (REDIS) FIXED
 # =========================================================
 
 CACHES = {

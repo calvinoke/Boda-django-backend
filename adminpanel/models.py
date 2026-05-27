@@ -112,15 +112,3 @@ class SystemLog(models.Model):
 
         return self.level
 
-
-# =========================================================
-# TEST MODEL
-# =========================================================
-
-class TestModel(models.Model):
-
-    name = models.CharField(max_length=100)
-
-    def __str__(self):
-
-        return self.name

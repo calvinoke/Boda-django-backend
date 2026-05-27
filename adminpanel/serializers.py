@@ -1,23 +1,10 @@
 from rest_framework import serializers
-from .models import (
-
-    RiderActivity,
-
-    SystemLog
-)
+from .models import (RiderActivity,SystemLog)
 
 
-class RiderActivitySerializer(
+class RiderActivitySerializer(serializers.ModelSerializer):
 
-    serializers.ModelSerializer
-):
-
-    rider_email = serializers.EmailField(
-
-        source='rider.user.email',
-
-        read_only=True
-    )
+    rider_email = serializers.EmailField(source='rider.user.email',read_only=True)
 
     class Meta:
 
@@ -26,10 +13,7 @@ class RiderActivitySerializer(
         fields = '__all__'
 
 
-class SystemLogSerializer(
-
-    serializers.ModelSerializer
-):
+class SystemLogSerializer(serializers.ModelSerializer):
 
     class Meta:
 

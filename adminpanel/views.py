@@ -1,24 +1,10 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import (
-    IsAuthenticated
-)
+from rest_framework.permissions import (IsAuthenticated)
 from riders.models import RiderProfile
-from accounts.permissions import (
-    IsAdminRole
-)
-from .models import (
-
-    RiderActivity,
-
-    SystemLog
-)
-from .tasks import (
-
-    broadcast_admin_event,
-
-    refresh_admin_cache
-)
+from accounts.permissions import (IsAdminRole)
+from .models import (RiderActivity,SystemLog)
+from .tasks import (broadcast_admin_event,refresh_admin_cache)
 
 
 # =========================================================
@@ -27,27 +13,13 @@ from .tasks import (
 
 class ApproveRiderAPIView(APIView):
 
-    permission_classes = [
+    permission_classes = [IsAuthenticated, IsAdminRole]
 
-        IsAuthenticated,
-
-        IsAdminRole
-    ]
-
-    def post(
-
-        self,
-
-        request,
-
-        rider_id
-    ):
+    def post(self,request,rider_id):
 
         try:
 
-            rider = RiderProfile.objects.get(
-                id=rider_id
-            )
+            rider = RiderProfile.objects.get(id=rider_id)
 
             rider.status = 'approved'
 

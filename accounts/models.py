@@ -1,19 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.core.validators import (
-    RegexValidator
-)
 
-# =========================================================
-# VALIDATORS
-# =========================================================
-
-phone_validator = RegexValidator(
-
-    regex=r'^\+256[0-9]{9}$',
-
-    message='Phone number must be in format: +2567XXXXXXXX'
-)
 
 # =========================================================
 # CUSTOM USER MODEL
@@ -40,11 +27,11 @@ class User(AbstractUser):
     # EMAIL OPTIONAL
     # =====================================================
 
-    # Used only for:
+    # Used for:
     # - notifications
-    # - messages
     # - password recovery
-    # NOT for login
+    # - communication
+    # NOT login
 
     email = models.EmailField(
 
@@ -78,13 +65,18 @@ class User(AbstractUser):
         db_index=True
     )
 
+    # =====================================================
+    # PHONE NUMBER
+    # =====================================================
+
+    # VALIDATION + NORMALIZATION
+    # WILL BE HANDLED IN SERIALIZERS
+
     phone_number = models.CharField(
 
         max_length=15,
 
         unique=True,
-
-        validators=[phone_validator],
 
         db_index=True
     )
@@ -128,13 +120,12 @@ class User(AbstractUser):
     # AUTHENTICATION
     # =====================================================
 
-    # LOGIN USING USERNAME
     USERNAME_FIELD = 'username'
 
     REQUIRED_FIELDS = ['phone_number']
 
     # =====================================================
-    # MODEL INDEXES
+    # MODEL METADATA
     # =====================================================
 
     class Meta:
@@ -158,4 +149,7 @@ class User(AbstractUser):
 
     def __str__(self):
 
-        return f"{self.username} - {self.role}"
+        return (
+            f"{self.username} - "
+            f"{self.role}"
+        )

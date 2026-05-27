@@ -1,20 +1,7 @@
 from django.urls import path, include
-
 from rest_framework.routers import DefaultRouter
-
-from .views import (
-
-    RegisterView,
-
-    UserViewSet
-)
-
-from rest_framework_simplejwt.views import (
-
-    TokenObtainPairView,
-
-    TokenRefreshView,
-)
+from .views import ( RegisterView,UserViewSet,OTPVerifyView,PasswordResetRequestView,PasswordResetConfirmView)
+from rest_framework_simplejwt.views import (TokenObtainPairView,TokenRefreshView,)
 
 
 # =========================================================
@@ -23,11 +10,7 @@ from rest_framework_simplejwt.views import (
 
 router = DefaultRouter()
 
-router.register(
-    r'users',
-    UserViewSet,
-    basename='users'
-)
+router.register( r'users', UserViewSet, basename='users')
 
 
 # =========================================================
@@ -36,34 +19,33 @@ router.register(
 
 urlpatterns = [
 
-    # AUTH
-    path(
+    # =====================================================
+    # AUTH - JWT
+    # =====================================================
 
-        'register/',
+    path('register/', RegisterView.as_view(),name='register'),
 
-        RegisterView.as_view(),
+    path('login/', TokenObtainPairView.as_view(), name='login'),
 
-        name='register'
-    ),
+    path( 'token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
-    path(
+    # =====================================================
+    # OTP AUTH SYSTEM
+    # =====================================================
 
-        'login/',
+    path('otp/verify/',OTPVerifyView.as_view(), name='otp_verify'),
 
-        TokenObtainPairView.as_view(),
+    # =====================================================
+    # PASSWORD RESET FLOW
+    # =====================================================
 
-        name='login'
-    ),
+    path('password-reset/',PasswordResetRequestView.as_view(), name='password_reset'),
 
-    path(
+    path( 'password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 
-        'token/refresh/',
-
-        TokenRefreshView.as_view(),
-
-        name='token_refresh'
-    ),
-
+    # =====================================================
     # USER APIs
-    path('', include(router.urls)),
+    # =====================================================
+
+    path('',include(router.urls)),
 ]
