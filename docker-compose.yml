@@ -2,33 +2,77 @@ version: "3.9"
 
 services:
 
+  # =====================================================
+  # DJANGO APP
+  # =====================================================
   web:
     build: .
+    container_name: django_web
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     depends_on:
+      - db
       - redis
 
+  # =====================================================
+  # POSTGRES DATABASE
+  # =====================================================
+  db:
+    image: postgres:15
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # =====================================================
+  # REDIS (CELERY + CHANNELS)
+  # =====================================================
   redis:
     image: redis:7
+    container_name: redis_cache
     ports:
       - "6379:6379"
 
+  # =====================================================
+  # CELERY WORKER
+  # =====================================================
   celery:
     build: .
+    container_name: celery_worker
     command: celery -A config worker -l info
     volumes:
       - .:/app
+    env_file:
+      - .env
     depends_on:
       - redis
+      - db
 
+  # =====================================================
+  # CELERY BEAT (SCHEDULER)
+  # =====================================================
   celery-beat:
     build: .
+    container_name: celery_beat
     command: celery -A config beat -l info
     volumes:
       - .:/app
+    env_file:
+      - .env
     depends_on:
       - redis
+      - db
+
+volumes:
+  pgdata:
