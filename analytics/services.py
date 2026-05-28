@@ -1,57 +1,97 @@
-# adminpanel/services.py
-
 from django.core.cache import cache
-
+from django.db.models import Count
 from riders.models import RiderProfile
-
-from verification.models import (
-    RiderVerification
-)
-
-from announcements.models import (
-    Announcement
-)
+from verification.models import RiderVerification
+from announcements.models import Announcement
+import logging
 
 
 # =========================================================
-# CACHE SYSTEM STATS
+# LOGGER SETUP
+# =========================================================
+
+logger = logging.getLogger(__name__)
+
+
+# =========================================================
+# SYSTEM STATS CACHE SERVICE (PRODUCTION READY)
 # =========================================================
 
 def cache_system_stats():
 
-    stats = {
+    try:
 
-        "total_riders":
-            RiderProfile.objects.count(),
+        logger.info("Starting system stats cache computation")
 
-        "approved_riders":
-            RiderProfile.objects.filter(
+        stats = RiderProfile.objects.aggregate(
+            total_riders=Count('id'),
+        )
+
+        data = {
+
+            # ================================
+            # RIDER STATS
+            # ================================
+
+            "total_riders": stats["total_riders"],
+
+            "approved_riders": RiderProfile.objects.filter(
                 status='approved'
             ).count(),
 
-        "pending_riders":
-            RiderProfile.objects.filter(
+            "pending_riders": RiderProfile.objects.filter(
                 status='pending'
             ).count(),
 
-        "suspended_riders":
-            RiderProfile.objects.filter(
+            "suspended_riders": RiderProfile.objects.filter(
                 status='suspended'
             ).count(),
 
-        "verified_riders":
-            RiderVerification.objects.filter(
+            # ================================
+            # VERIFICATION STATS
+            # ================================
+
+            "verified_riders": RiderVerification.objects.filter(
                 is_verified=True
             ).count(),
 
-        "announcements":
-            Announcement.objects.count(),
-    }
+            # ================================
+            # ANNOUNCEMENTS
+            # ================================
 
-    cache.set(
-        "system_stats",
-        stats,
-        timeout=60 * 5
-    )
+            "announcements": Announcement.objects.count(),
+        }
 
-    return stats
+        # ================================
+        # CACHE STORAGE
+        # ================================
+
+        cache.set(
+            "system_stats",
+            data,
+            timeout=60 * 5
+        )
+
+        logger.info("System stats cached successfully")
+
+        return data
+
+    except Exception as e:
+
+        logger.error(
+            f"System stats cache failed: {str(e)}",
+            exc_info=True
+        )
+
+        cached = cache.get("system_stats")
+
+        if cached:
+            logger.warning("Returned stale cached system stats")
+            return cached
+
+        logger.critical("No cache fallback available for system stats")
+
+        return {
+            "error": "Unable to load system stats",
+            "details": str(e)
+        }

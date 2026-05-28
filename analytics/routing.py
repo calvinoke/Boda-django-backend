@@ -1,10 +1,5 @@
 from django.urls import re_path
-from .consumers import (
-
-    AnalyticsDashboardConsumer,
-
-    SystemStatsConsumer
-)
+from .consumers import (AnalyticsDashboardConsumer,SystemStatsConsumer)
 
 websocket_urlpatterns = [
 
