@@ -1,56 +1,114 @@
+import logging
 from django.core.cache import cache
-from .models import (Announcement,Condolence)
+from django.db import DatabaseError
+from django.db.models import F
+from .models import Announcement, Condolence
 
 
 # =========================================================
-# CACHE ANNOUNCEMENTS
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger("cache")
+
+
+# =========================================================
+# CACHE KEYS (VERSIONED)
+# =========================================================
+
+ANNOUNCEMENTS_CACHE_KEY = "v1_latest_announcements"
+CONDOLENCES_CACHE_KEY = "v1_latest_condolences"
+
+CACHE_LOCK_ANNOUNCEMENTS = "lock_cache_announcements"
+CACHE_LOCK_CONDOLENCES = "lock_cache_condolences"
+
+
+# =========================================================
+# ANNOUNCEMENTS CACHE
 # =========================================================
 
 def cache_latest_announcements():
 
-    announcements = list(
+    # Prevent multiple workers from rebuilding cache at same time
+    if cache.get(CACHE_LOCK_ANNOUNCEMENTS):
+        logger.info("Announcements cache rebuild skipped (locked)")
+        return
 
-        Announcement.objects.select_related(
-            'created_by'
-        ).values(
+    cache.set(CACHE_LOCK_ANNOUNCEMENTS, True, timeout=30)
 
-            'id',
-            'title',
-            'message',
-            'announcement_type',
-            'created_at'
-        )[:50]
-    )
+    try:
+        logger.info("Refreshing announcements cache...")
 
-    cache.set(
-        "latest_announcements",
-        announcements,
-        timeout=60 * 10
-    )
+        announcements = list(
+            Announcement.objects.select_related("created_by")
+            .order_by("-created_at")
+            .values(
+                "id",
+                "title",
+                "message",
+                "announcement_type",
+                "created_at",
+            )[:50]
+        )
+
+        cache.set(
+            ANNOUNCEMENTS_CACHE_KEY,
+            announcements,
+            timeout=60 * 10,  # 10 minutes
+        )
+
+        logger.info(f"Cached {len(announcements)} announcements successfully")
+
+    except DatabaseError as e:
+        logger.error(f"DB error while caching announcements: {str(e)}")
+
+    except Exception as e:
+        logger.exception(f"Unexpected error caching announcements: {str(e)}")
+
+    finally:
+        cache.delete(CACHE_LOCK_ANNOUNCEMENTS)
 
 
 # =========================================================
-# CACHE CONDOLENCES
+# CONDOLENCES CACHE
 # =========================================================
 
 def cache_latest_condolences():
 
-    condolences = list(
+    if cache.get(CACHE_LOCK_CONDOLENCES):
+        logger.info("Condolences cache rebuild skipped (locked)")
+        return
 
-        Condolence.objects.select_related(
-            'rider'
-        ).values(
+    cache.set(CACHE_LOCK_CONDOLENCES, True, timeout=30)
 
-            'id',
-            'description',
-            'burial_location',
-            'status',
-            'date_of_death'
-        )[:50]
-    )
+    try:
+        logger.info("Refreshing condolences cache...")
 
-    cache.set(
-        "latest_condolences",
-        condolences,
-        timeout=60 * 10
-    )
+        condolences = list(
+            Condolence.objects.select_related("rider")
+            .order_by("-date_of_death")
+            .values(
+                "id",
+                "description",
+                "burial_location",
+                "status",
+                "date_of_death",
+            )[:50]
+        )
+
+        cache.set(
+            CONDOLENCES_CACHE_KEY,
+            condolences,
+            timeout=60 * 10,  # 10 minutes
+        )
+
+        logger.info(f"Cached {len(condolences)} condolences successfully")
+
+    except DatabaseError as e:
+        logger.error(f"DB error while caching condolences: {str(e)}")
+
+    except Exception as e:
+        logger.exception(f"Unexpected error caching condolences: {str(e)}")
+
+    finally:
+        cache.delete(CACHE_LOCK_CONDOLENCES)

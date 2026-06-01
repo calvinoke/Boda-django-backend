@@ -1,87 +1,136 @@
+import logging
+
 from celery import shared_task
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.core.cache import cache
-from .models import ( RiderActivity, SystemLog)
+
+from .models import (
+    RiderActivity,
+    SystemLog
+)
+
+# =========================================================
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
 # BROADCAST ADMIN EVENT
 # =========================================================
 
-@shared_task
-def broadcast_admin_event(message):
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3}
+)
+def broadcast_admin_event(
+    self,
+    message
+):
 
-    channel_layer = get_channel_layer()
+    try:
 
-    async_to_sync(
-        channel_layer.group_send
-    )(
+        channel_layer = get_channel_layer()
 
-        "admin_dashboard",
+        if not channel_layer:
 
-        {
+            logger.error(
+                "Channel layer unavailable."
+            )
 
-            "type": "send_admin_notification",
+            return
 
-            "message": message,
-        }
-    )
+        async_to_sync(
+            channel_layer.group_send
+        )(
+            "admin_dashboard",
+            {
+                "type": "send_admin_notification",
+                "message": message,
+            }
+        )
+
+        logger.info(
+            f"Admin event broadcast successfully: {message}"
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            f"Failed to broadcast admin event: {str(exc)}"
+        )
+
+        raise
 
 
 # =========================================================
 # CACHE ADMIN STATS
 # =========================================================
 
-@shared_task
-def refresh_admin_cache():
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3}
+)
+def refresh_admin_cache(
+    self
+):
 
-    activities = list(
+    try:
 
-        RiderActivity.objects.select_related(
-            'rider'
-        ).values(
+        activities = list(
 
-            'id',
+            RiderActivity.objects
+            .select_related("rider")
+            .values(
+                "id",
+                "action",
+                "description",
+                "timestamp"
+            )[:100]
+        )
 
-            'action',
+        logs = list(
 
-            'description',
+            SystemLog.objects.values(
+                "id",
+                "message",
+                "level",
+                "created_at"
+            )[:100]
+        )
 
-            'timestamp'
-        )[:100]
-    )
+        cache.set(
+            "admin_activities",
+            activities,
+            timeout=60 * 10
+        )
 
-    logs = list(
+        cache.set(
+            "system_logs",
+            logs,
+            timeout=60 * 10
+        )
 
-        SystemLog.objects.values(
+        logger.info(
+            "Admin cache refreshed successfully."
+        )
 
-            'id',
+        return {
+            "status": "success",
+            "activities": len(activities),
+            "logs": len(logs)
+        }
 
-            'message',
+    except Exception as exc:
 
-            'level',
+        logger.exception(
+            f"Failed to refresh admin cache: {str(exc)}"
+        )
 
-            'created_at'
-        )[:100]
-    )
-
-    cache.set(
-
-        "admin_activities",
-
-        activities,
-
-        timeout=60 * 10
-    )
-
-    cache.set(
-
-        "system_logs",
-
-        logs,
-
-        timeout=60 * 10
-    )
-
-    return "Admin cache refreshed"
+        raise

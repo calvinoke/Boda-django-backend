@@ -1,38 +1,71 @@
+import logging
 from django.core.cache import cache
 from .models import EmergencyContact
 
 
 # =========================================================
-# CACHE CONTACTS
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger("cache")
+
+
+# =========================================================
+# CACHE CONTACTS (PRODUCTION SAFE)
 # =========================================================
 
 def cache_rider_contacts(user_id):
 
-    contacts = list(
+    cache_key = f"v1_rider_contacts_{user_id}"
 
-        EmergencyContact.objects.filter(
-            rider__user_id=user_id
-        ).values(
+    try:
+        logger.info(f"Refreshing rider contacts cache | user_id={user_id}")
 
-            'id',
-
-            'name',
-
-            'phone_number',
-
-            'relationship',
-
-            'village'
+        contacts = list(
+            EmergencyContact.objects.filter(
+                rider__user_id=user_id
+            ).values(
+                "id",
+                "name",
+                "phone_number",
+                "relationship",
+                "village",
+            )
         )
-    )
 
-    cache.set(
+        cache.set(
+            cache_key,
+            contacts,
+            timeout=60 * 10,  # 10 minutes
+        )
 
-        f"rider_contacts_{user_id}",
+        logger.info(
+            f"Cached rider contacts successfully | user_id={user_id} | count={len(contacts)}"
+        )
 
-        contacts,
+        return contacts
 
-        timeout=60 * 10
-    )
+    except Exception as exc:
 
-    return contacts
+        logger.error(
+            f"Failed to cache rider contacts | user_id={user_id} | error={str(exc)}"
+        )
+
+        # Safe fallback: still return fresh DB data
+        try:
+            return list(
+                EmergencyContact.objects.filter(
+                    rider__user_id=user_id
+                ).values(
+                    "id",
+                    "name",
+                    "phone_number",
+                    "relationship",
+                    "village",
+                )
+            )
+        except Exception as inner_exc:
+            logger.critical(
+                f"Critical failure fetching rider contacts | user_id={user_id} | error={str(inner_exc)}"
+            )
+            return []
