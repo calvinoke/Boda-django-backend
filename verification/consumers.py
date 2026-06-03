@@ -1,46 +1,83 @@
 import json
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 
+logger = logging.getLogger("verification.consumer")
 
-class VerificationConsumer(
 
-    AsyncWebsocketConsumer
-):
+class VerificationConsumer(AsyncWebsocketConsumer):
+
+    # =====================================================
+    # CONNECT
+    # =====================================================
 
     async def connect(self):
 
-        self.room_group_name = "verification"
+        try:
+            self.user = self.scope.get("user")
 
-        await self.channel_layer.group_add(
+            # AUTH CHECK (CRITICAL FOR PRODUCTION)
+            if not self.user or self.user.is_anonymous:
+                logger.warning("Unauthorized WebSocket connection rejected")
+                await self.close()
+                return
 
-            self.room_group_name,
+            # USER-SPECIFIC ROOM (SAFER THAN GLOBAL ROOM)
+            self.room_group_name = f"verification_{self.user.id}"
 
-            self.channel_name
-        )
+            await self.channel_layer.group_add(
+                self.room_group_name,
+                self.channel_name
+            )
 
-        await self.accept()
+            await self.accept()
 
-    async def disconnect(
-        self,
-        close_code
-    ):
+            logger.info(
+                f"Verification WS connected | user_id={self.user.id}"
+            )
 
-        await self.channel_layer.group_discard(
+        except Exception as exc:
+            logger.exception(f"Verification connect error: {str(exc)}")
+            await self.close()
 
-            self.room_group_name,
+    # =====================================================
+    # DISCONNECT
+    # =====================================================
 
-            self.channel_name
-        )
+    async def disconnect(self, close_code):
 
-    async def send_verification_event(
-        self,
-        event
-    ):
+        try:
+            if hasattr(self, "room_group_name"):
+                await self.channel_layer.group_discard(
+                    self.room_group_name,
+                    self.channel_name
+                )
 
-        await self.send(
+            logger.info(
+                f"Verification WS disconnected | user_id={getattr(self.user, 'id', None)}"
+            )
 
-            text_data=json.dumps({
+        except Exception as exc:
+            logger.exception(f"Verification disconnect error: {str(exc)}")
 
-                "message": event["message"]
-            })
-        )
+    # =====================================================
+    # EVENT HANDLER
+    # =====================================================
+
+    async def send_verification_event(self, event):
+
+        try:
+            message = event.get("message", {})
+
+            await self.send(
+                text_data=json.dumps({
+                    "message": message
+                })
+            )
+
+            logger.info(
+                f"Verification event sent | user_id={getattr(self.user, 'id', None)}"
+            )
+
+        except Exception as exc:
+            logger.exception(f"Verification event send error: {str(exc)}")

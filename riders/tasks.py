@@ -1,12 +1,12 @@
+import logging
 from celery import shared_task
 from django.core.cache import cache
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
-from .models import (
-    RiderProfile,
-    GuestRider
-)
+from .models import RiderProfile, GuestRider
+
+logger = logging.getLogger("riders.tasks")
 
 
 # =========================================================
@@ -15,7 +15,7 @@ from .models import (
 
 @shared_task
 def test_task():
-
+    logger.info("Celery test task executed successfully")
     return "Celery is working!"
 
 
@@ -26,41 +26,32 @@ def test_task():
 @shared_task
 def refresh_riders_cache():
 
-    riders = list(
-
-        RiderProfile.objects.select_related(
-            'user',
-            'stage'
-        ).values(
-
-            'id',
-
-            'user__username',
-
-            'bike_plate_number',
-
-            'status',
-
-            'is_online',
-
-            'is_verified',
-
-            'latitude',
-
-            'longitude'
+    try:
+        riders = list(
+            RiderProfile.objects.select_related(
+                'user',
+                'stage'
+            ).values(
+                'id',
+                'user__username',
+                'bike_plate_number',
+                'status',
+                'is_online',
+                'is_verified',
+                'latitude',
+                'longitude'
+            )
         )
-    )
 
-    cache.set(
+        cache.set("active_riders", riders, timeout=60 * 10)
 
-        "active_riders",
+        logger.info(f"Riders cache refreshed | count={len(riders)}")
 
-        riders,
+        return "Riders cache refreshed"
 
-        timeout=60 * 10
-    )
-
-    return "Riders cache refreshed"
+    except Exception as exc:
+        logger.error(f"Riders cache refresh failed | error={str(exc)}")
+        raise
 
 
 # =========================================================
@@ -70,36 +61,27 @@ def refresh_riders_cache():
 @shared_task
 def refresh_guest_riders_cache():
 
-    guests = list(
-
-        GuestRider.objects.select_related(
-            'user'
-        ).values(
-
-            'id',
-
-            'user__username',
-
-            'bike_plate_number',
-
-            'status',
-
-            'latitude',
-
-            'longitude'
+    try:
+        guests = list(
+            GuestRider.objects.select_related('user').values(
+                'id',
+                'user__username',
+                'bike_plate_number',
+                'status',
+                'latitude',
+                'longitude'
+            )
         )
-    )
 
-    cache.set(
+        cache.set("guest_riders", guests, timeout=60 * 10)
 
-        "guest_riders",
+        logger.info(f"Guest riders cache refreshed | count={len(guests)}")
 
-        guests,
+        return "Guest riders cache refreshed"
 
-        timeout=60 * 10
-    )
-
-    return "Guest riders cache refreshed"
+    except Exception as exc:
+        logger.error(f"Guest riders cache refresh failed | error={str(exc)}")
+        raise
 
 
 # =========================================================
@@ -107,54 +89,41 @@ def refresh_guest_riders_cache():
 # =========================================================
 
 @shared_task
-def set_rider_online_status(
-
-    rider_id,
-
-    status=True
-):
+def set_rider_online_status(rider_id, status=True):
 
     try:
-
-        rider = RiderProfile.objects.get(
-            id=rider_id
-        )
+        rider = RiderProfile.objects.select_related("user").get(id=rider_id)
 
         rider.is_online = status
-
         rider.last_location_update = timezone.now()
-
-        rider.save()
-
-        # =============================================
-        # BROADCAST LIVE STATUS
-        # =============================================
+        rider.save(update_fields=["is_online", "last_location_update"])
 
         channel_layer = get_channel_layer()
 
-        async_to_sync(
-            channel_layer.group_send
-        )(
-
+        async_to_sync(channel_layer.group_send)(
             "riders",
-
             {
-
                 "type": "send_rider_status",
-
                 "data": {
-
                     "rider_id": rider.id,
-
                     "username": rider.user.username,
-
                     "is_online": rider.is_online,
                 }
             }
         )
 
+        logger.info(
+            f"Rider online status updated | rider_id={rider.id} | status={status}"
+        )
+
         return "Rider status updated"
 
     except RiderProfile.DoesNotExist:
-
+        logger.warning(f"Rider not found | rider_id={rider_id}")
         return "Rider not found"
+
+    except Exception as exc:
+        logger.error(
+            f"Failed to update rider status | rider_id={rider_id} | error={str(exc)}"
+        )
+        raise

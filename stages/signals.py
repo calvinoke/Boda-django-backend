@@ -1,60 +1,53 @@
+import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+
 from .models import Stage
-from .tasks import (
+from .tasks import broadcast_stage_update, refresh_stage_cache
 
-    broadcast_stage_update,
-
-    refresh_stage_cache
-)
+logger = logging.getLogger("stages.signals")
 
 
 # =========================================================
-# STAGE CREATED / UPDATED
+# STAGE CREATED / UPDATED SIGNAL (PRODUCTION READY)
 # =========================================================
 
 @receiver(post_save, sender=Stage)
-def stage_saved_handler(
-    sender,
-    instance,
-    created,
-    **kwargs
-):
+def stage_saved_handler(sender, instance, created, **kwargs):
 
-    if created:
+    try:
+
+        event_type = "stage_created" if created else "stage_updated"
 
         message = {
-
-            "event": "stage_created",
-
+            "event": event_type,
             "stage_id": instance.id,
-
             "name": instance.name,
-
             "district": instance.district,
-
             "division": instance.division,
         }
 
-    else:
+        # =====================================================
+        # CELERY TASKS (ASYNC PROCESSING)
+        # =====================================================
 
-        message = {
+        broadcast_stage_update.delay(message)
+        refresh_stage_cache.delay()
 
-            "event": "stage_updated",
+        # =====================================================
+        # LOG SUCCESS
+        # =====================================================
 
-            "stage_id": instance.id,
+        logger.info(
+            f"Stage signal processed | event={event_type} | stage_id={instance.id}"
+        )
 
-            "name": instance.name,
+    except Exception as exc:
 
-            "district": instance.district,
+        # =====================================================
+        # LOG FAILURE (CRITICAL FOR DEBUGGING IN PROD)
+        # =====================================================
 
-            "division": instance.division,
-        }
-
-    # =====================================================
-    # CELERY TASKS
-    # =====================================================
-
-    broadcast_stage_update.delay(message)
-
-    refresh_stage_cache.delay()
+        logger.exception(
+            f"Stage signal failed | stage_id={instance.id} | error={str(exc)}"
+        )

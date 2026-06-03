@@ -1,33 +1,51 @@
+import uuid
 from django.db import models
 from django.conf import settings
+
 
 User = settings.AUTH_USER_MODEL
 
 
+# =========================================================
+# NOTIFICATION MODEL (PRODUCTION READY)
+# =========================================================
+
 class Notification(models.Model):
 
     NOTIFICATION_TYPES = (
-
         ('announcement', 'Announcement'),
-
         ('verification', 'Verification'),
-
         ('emergency', 'Emergency'),
-
         ('security', 'Security'),
-
         ('general', 'General'),
     )
+
+    # =====================================================
+    # PRIMARY KEY (OPTIONAL BUT SCALABLE)
+    # =====================================================
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
+    # =====================================================
+    # USER RELATIONSHIP
+    # =====================================================
 
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='notifications'
+        related_name='notifications',
+        db_index=True
     )
 
-    title = models.CharField(
-        max_length=255
-    )
+    # =====================================================
+    # CONTENT
+    # =====================================================
+
+    title = models.CharField(max_length=255)
 
     message = models.TextField()
 
@@ -37,29 +55,42 @@ class Notification(models.Model):
         db_index=True
     )
 
+    # =====================================================
+    # READ STATE
+    # =====================================================
+
     is_read = models.BooleanField(
         default=False,
         db_index=True
     )
+
+    # =====================================================
+    # TIMESTAMP
+    # =====================================================
 
     created_at = models.DateTimeField(
         auto_now_add=True,
         db_index=True
     )
 
+    # =====================================================
+    # META (PERFORMANCE OPTIMIZED)
+    # =====================================================
+
     class Meta:
 
         ordering = ['-created_at']
 
         indexes = [
-
+            models.Index(fields=['user', 'is_read']),
             models.Index(fields=['notification_type']),
-
-            models.Index(fields=['is_read']),
-
             models.Index(fields=['created_at']),
         ]
 
+    # =====================================================
+    # STRING REPRESENTATION
+    # =====================================================
+
     def __str__(self):
 
-        return f"{self.user.username} - {self.title}"
+        return f"{self.user_id} - {self.title}"

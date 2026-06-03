@@ -1,38 +1,23 @@
-from rest_framework import viewsets
-
+import logging
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
-
 from rest_framework.response import Response
-
 from rest_framework.permissions import IsAuthenticated
-
-from rest_framework import status
-
 from django.utils import timezone
-
-from .models import (
-    Fine,
-    FineType
-)
-
-from .serializers import (
-    FineSerializer,
-    FineTypeSerializer
-)
-
-from .permissions import (
-    CanIssueFine,
-    CanViewFines
-)
-
+from .models import Fine, FineType
+from .serializers import FineSerializer, FineTypeSerializer
+from .permissions import CanIssueFine, CanViewFines
 from .tasks import (
-
     broadcast_fine_alert,
-
     refresh_fines_cache,
-
     cache_unpaid_fines_count
 )
+
+# =========================================================
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger("fines.views")
 
 
 # =========================================================
@@ -41,24 +26,19 @@ from .tasks import (
 
 class FineTypeViewSet(viewsets.ModelViewSet):
 
-    queryset = FineType.objects.filter(
-        is_active=True
-    )
-
+    queryset = FineType.objects.filter(is_active=True)
     serializer_class = FineTypeSerializer
+    permission_classes = [CanIssueFine]
 
-    permission_classes = [
-        CanIssueFine
-    ]
+    search_fields = ["name"]
+    ordering_fields = ["name", "default_amount"]
 
-    search_fields = [
-        'name'
-    ]
+    def perform_create(self, serializer):
+        obj = serializer.save()
 
-    ordering_fields = [
-        'name',
-        'default_amount'
-    ]
+        logger.info(
+            f"FineType created | id={obj.id} | user={self.request.user.id}"
+        )
 
 
 # =========================================================
@@ -68,333 +48,226 @@ class FineTypeViewSet(viewsets.ModelViewSet):
 class FineViewSet(viewsets.ModelViewSet):
 
     queryset = Fine.objects.select_related(
-
-        'issued_by',
-
-        'rider',
-
-        'guest_rider',
-
-        'stage',
-
-        'fine_type'
-    ).order_by('-created_at')
+        "issued_by",
+        "rider",
+        "guest_rider",
+        "stage",
+        "fine_type"
+    ).order_by("-created_at")
 
     serializer_class = FineSerializer
+    permission_classes = [IsAuthenticated, CanViewFines]
 
-    permission_classes = [
-        IsAuthenticated,
-        CanViewFines
-    ]
+    search_fields = ["reason", "status", "offender_type", "payment_reference"]
 
-    search_fields = [
+    filterset_fields = ["status", "offender_type", "fine_type", "stage"]
 
-        'reason',
-
-        'status',
-
-        'offender_type',
-
-        'payment_reference'
-    ]
-
-    filterset_fields = [
-
-        'status',
-
-        'offender_type',
-
-        'fine_type',
-
-        'stage'
-    ]
-
-    ordering_fields = [
-
-        'created_at',
-
-        'amount',
-
-        'status'
-    ]
+    ordering_fields = ["created_at", "amount", "status"]
 
     # =====================================================
-    # CREATE FINE
+    # CREATE
     # =====================================================
 
     def perform_create(self, serializer):
 
-        fine = serializer.save(
+        try:
+            fine = serializer.save(issued_by=self.request.user)
 
-            issued_by=self.request.user
-        )
-
-        # =================================================
-        # BROADCAST LIVE ALERT
-        # =================================================
-
-        broadcast_fine_alert.delay(
-            fine.id
-        )
-
-        # =================================================
-        # REFRESH REDIS CACHE
-        # =================================================
-
-        if fine.rider:
-
-            refresh_fines_cache.delay(
-                fine.rider.user.id
+            logger.info(
+                f"Fine created | fine_id={fine.id} | user_id={self.request.user.id}"
             )
 
-        elif fine.guest_rider:
+            broadcast_fine_alert.delay(fine.id)
+            cache_unpaid_fines_count.delay()
 
-            refresh_fines_cache.delay(
-                fine.guest_rider.user.id
+            user_id = fine.rider.user.id if fine.rider else (
+                fine.guest_rider.user.id if fine.guest_rider else None
             )
 
-        # =================================================
-        # UPDATE GLOBAL COUNTERS
-        # =================================================
+            if user_id:
+                refresh_fines_cache.delay(user_id)
 
-        cache_unpaid_fines_count.delay()
+        except Exception as exc:
+            logger.error(
+                f"Fine creation failed | user_id={self.request.user.id} | error={str(exc)}"
+            )
+            raise
 
     # =====================================================
-    # UPDATE FINE
+    # UPDATE
     # =====================================================
 
     def perform_update(self, serializer):
 
-        fine = serializer.save()
+        try:
+            fine = serializer.save()
 
-        # =================================================
-        # REFRESH CACHE
-        # =================================================
-
-        if fine.rider:
-
-            refresh_fines_cache.delay(
-                fine.rider.user.id
+            logger.info(
+                f"Fine updated | fine_id={fine.id}"
             )
 
-        elif fine.guest_rider:
+            broadcast_fine_alert.delay(fine.id)
+            cache_unpaid_fines_count.delay()
 
-            refresh_fines_cache.delay(
-                fine.guest_rider.user.id
+            user_id = fine.rider.user.id if fine.rider else (
+                fine.guest_rider.user.id if fine.guest_rider else None
             )
 
-        # =================================================
-        # LIVE UPDATE
-        # =================================================
+            if user_id:
+                refresh_fines_cache.delay(user_id)
 
-        broadcast_fine_alert.delay(
-            fine.id
-        )
-
-        cache_unpaid_fines_count.delay()
+        except Exception as exc:
+            logger.error(
+                f"Fine update failed | error={str(exc)}"
+            )
+            raise
 
     # =====================================================
-    # DELETE FINE
+    # DELETE
     # =====================================================
 
     def perform_destroy(self, instance):
 
-        rider_user_id = None
+        try:
+            fine_id = instance.id
 
-        guest_user_id = None
-
-        if instance.rider:
-
-            rider_user_id = (
-                instance.rider.user.id
+            user_id = instance.rider.user.id if instance.rider else (
+                instance.guest_rider.user.id if instance.guest_rider else None
             )
 
-        if instance.guest_rider:
+            instance.delete()
 
-            guest_user_id = (
-                instance.guest_rider.user.id
+            logger.info(
+                f"Fine deleted | fine_id={fine_id}"
             )
 
-        instance.delete()
+            if user_id:
+                refresh_fines_cache.delay(user_id)
 
-        # =================================================
-        # REFRESH CACHE
-        # =================================================
+            cache_unpaid_fines_count.delay()
+            broadcast_fine_alert.delay(fine_id)
 
-        if rider_user_id:
-
-            refresh_fines_cache.delay(
-                rider_user_id
+        except Exception as exc:
+            logger.error(
+                f"Fine delete failed | error={str(exc)}"
             )
-
-        if guest_user_id:
-
-            refresh_fines_cache.delay(
-                guest_user_id
-            )
-
-        cache_unpaid_fines_count.delay()
+            raise
 
     # =====================================================
-    # CUSTOM QUERYSET
+    # QUERYSET (ROLE BASED ACCESS)
     # =====================================================
 
     def get_queryset(self):
 
         user = self.request.user
 
-        # =================================================
-        # MANAGEMENT CAN VIEW ALL
-        # =================================================
+        try:
+            if user.role in [
+                "super_admin",
+                "stage_chairman",
+                "stage_secretary",
+                "stage_defense"
+            ]:
+                return self.queryset
 
-        if user.role in [
+            if user.role == "rider":
+                return self.queryset.filter(rider__user=user)
 
-            'super_admin',
+            if user.role == "guest_rider":
+                return self.queryset.filter(guest_rider__user=user)
 
-            'stage_chairman',
+            return Fine.objects.none()
 
-            'stage_secretary',
-
-            'stage_defense'
-        ]:
-
-            return self.queryset
-
-        # =================================================
-        # RIDER CAN VIEW OWN FINES
-        # =================================================
-
-        if user.role == 'rider':
-
-            return self.queryset.filter(
-                rider__user=user
+        except Exception as exc:
+            logger.error(
+                f"Queryset error | user_id={user.id} | error={str(exc)}"
             )
-
-        # =================================================
-        # GUEST RIDER CAN VIEW OWN FINES
-        # =================================================
-
-        if user.role == 'guest_rider':
-
-            return self.queryset.filter(
-                guest_rider__user=user
-            )
-
-        return Fine.objects.none()
+            return Fine.objects.none()
 
     # =====================================================
-    # MARK FINE AS PAID
+    # MARK AS PAID
     # =====================================================
 
-    @action(
-        detail=True,
-        methods=['post']
-    )
+    @action(detail=True, methods=["post"])
     def mark_as_paid(self, request, pk=None):
 
         fine = self.get_object()
 
-        fine.status = 'paid'
+        if fine.status == "paid":
+            return Response(
+                {"detail": "Fine already paid"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        fine.status = "paid"
         fine.paid_at = timezone.now()
-
-        fine.payment_reference = request.data.get(
-            'payment_reference'
-        )
-
+        fine.payment_reference = request.data.get("payment_reference", "")
         fine.save()
 
-        # =================================================
-        # REFRESH CACHE
-        # =================================================
+        logger.info(f"Fine marked paid | fine_id={fine.id}")
 
-        if fine.rider:
-
-            refresh_fines_cache.delay(
-                fine.rider.user.id
-            )
-
-        elif fine.guest_rider:
-
-            refresh_fines_cache.delay(
-                fine.guest_rider.user.id
-            )
-
-        # =================================================
-        # LIVE ALERT
-        # =================================================
-
-        broadcast_fine_alert.delay(
-            fine.id
-        )
-
+        broadcast_fine_alert.delay(fine.id)
         cache_unpaid_fines_count.delay()
 
         return Response({
-
             "message": "Fine marked as paid",
-
             "fine_id": fine.id,
-
             "status": fine.status
         })
 
     # =====================================================
-    # DISPUTE FINE
+    # DISPUTE
     # =====================================================
 
-    @action(
-        detail=True,
-        methods=['post']
-    )
+    @action(detail=True, methods=["post"])
     def dispute(self, request, pk=None):
 
         fine = self.get_object()
 
-        fine.status = 'disputed'
+        if fine.status in ["paid", "cancelled"]:
+            return Response(
+                {"detail": "Cannot dispute this fine"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        fine.status = "disputed"
         fine.save()
 
-        broadcast_fine_alert.delay(
-            fine.id
-        )
+        logger.info(f"Fine disputed | fine_id={fine.id}")
+
+        broadcast_fine_alert.delay(fine.id)
 
         return Response({
-
             "message": "Fine disputed successfully",
-
             "fine_id": fine.id,
-
             "status": fine.status
         })
 
     # =====================================================
-    # CANCEL FINE
+    # CANCEL
     # =====================================================
 
-    @action(
-        detail=True,
-        methods=['post']
-    )
+    @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
 
         fine = self.get_object()
 
-        fine.status = 'cancelled'
+        if fine.status == "paid":
+            return Response(
+                {"detail": "Cannot cancel a paid fine"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        fine.status = "cancelled"
         fine.save()
 
-        broadcast_fine_alert.delay(
-            fine.id
-        )
+        logger.info(f"Fine cancelled | fine_id={fine.id}")
 
+        broadcast_fine_alert.delay(fine.id)
         cache_unpaid_fines_count.delay()
 
         return Response({
-
             "message": "Fine cancelled",
-
             "fine_id": fine.id,
-
             "status": fine.status
         })

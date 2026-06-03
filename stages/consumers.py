@@ -1,3 +1,5 @@
+import logging
+
 from celery import shared_task
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -6,27 +8,53 @@ from .models import Stage
 
 
 # =========================================================
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger("stages.tasks")
+
+
+# =========================================================
 # BROADCAST STAGE UPDATE
 # =========================================================
 
-@shared_task
-def broadcast_stage_update(message):
+@shared_task(bind=True, max_retries=3)
+def broadcast_stage_update(self, message):
 
-    channel_layer = get_channel_layer()
+    try:
 
-    async_to_sync(
-        channel_layer.group_send
-    )(
+        logger.info(
+            "Broadcasting stage update"
+        )
 
-        "stages",
+        channel_layer = get_channel_layer()
 
-        {
+        if not channel_layer:
+            logger.error("Channel layer not configured")
+            return "Channel layer missing"
 
-            "type": "send_stage_update",
+        async_to_sync(channel_layer.group_send)(
+            "stages",
+            {
+                "type": "send_stage_update",
+                "message": message,
+            },
+        )
 
-            "message": message,
-        }
-    )
+        logger.info(
+            "Stage update broadcast successful"
+        )
+
+        return "Stage update broadcasted"
+
+    except Exception as exc:
+
+        logger.exception(
+            "Stage broadcast failed | error=%s",
+            str(exc),
+        )
+
+        raise self.retry(exc=exc, countdown=5)
 
 
 # =========================================================
@@ -36,45 +64,60 @@ def broadcast_stage_update(message):
 @shared_task
 def refresh_stage_cache():
 
-    stages = list(
+    try:
 
-        Stage.objects.select_related(
-            'chairman',
-            'secretary',
-            'defense'
-        ).values(
-
-            'id',
-
-            'name',
-
-            'district',
-
-            'division',
-
-            'parish',
-
-            'village',
-
-            'is_active',
-
-            'total_registered_riders',
-
-            'total_guest_riders_seen',
-
-            'suspicious_activity_score',
-
-            'created_at'
+        stages = list(
+            Stage.objects.select_related(
+                "chairman",
+                "secretary",
+                "defense",
+            )
+            .only(
+                "id",
+                "name",
+                "district",
+                "division",
+                "parish",
+                "village",
+                "is_active",
+                "total_registered_riders",
+                "total_guest_riders_seen",
+                "suspicious_activity_score",
+                "created_at",
+            )
+            .values(
+                "id",
+                "name",
+                "district",
+                "division",
+                "parish",
+                "village",
+                "is_active",
+                "total_registered_riders",
+                "total_guest_riders_seen",
+                "suspicious_activity_score",
+                "created_at",
+            )
         )
-    )
 
-    cache.set(
+        cache.set(
+            "stages_cache",
+            stages,
+            timeout=60 * 10,
+        )
 
-        "stages_cache",
+        logger.info(
+            "Stage cache refreshed | count=%s",
+            len(stages),
+        )
 
-        stages,
+        return "Stage cache refreshed"
 
-        timeout=60 * 10
-    )
+    except Exception as exc:
 
-    return "Stage cache refreshed"
+        logger.exception(
+            "Stage cache refresh failed | error=%s",
+            str(exc),
+        )
+
+        return "Stage cache refresh failed"

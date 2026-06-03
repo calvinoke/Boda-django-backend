@@ -1,23 +1,12 @@
 import json
 import logging
-
 from channels.generic.websocket import AsyncWebsocketConsumer
-
-from .tasks import (
-
-    save_location_task,
-
-    trigger_auto_fine_task,
-
-    create_suspicious_event_task
-)
+from .tasks import (save_location_task, trigger_auto_fine_task, create_suspicious_event_task)
 
 logger = logging.getLogger(__name__)
 
 
-class RiderLocationConsumer(
-    AsyncWebsocketConsumer
-):
+class RiderLocationConsumer( AsyncWebsocketConsumer):
 
     # =========================================================
     # CONNECT

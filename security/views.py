@@ -1,33 +1,34 @@
+import logging
+
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
 from .models import SecurityAlert
-from .serializers import (
-    SecurityAlertSerializer
-)
+from .serializers import SecurityAlertSerializer
+from .tasks import ( broadcast_security_alert, refresh_security_alert_cache,)
 
-from .tasks import (
+# =========================================================
+# LOGGER
+# =========================================================
 
-    broadcast_security_alert,
-
-    refresh_security_alert_cache
-)
+logger = logging.getLogger("security.views")
 
 
-class SecurityAlertViewSet(
+# =========================================================
+# SECURITY ALERT VIEWSET
+# =========================================================
 
-    viewsets.ModelViewSet
-):
+class SecurityAlertViewSet(viewsets.ModelViewSet):
 
     serializer_class = SecurityAlertSerializer
-
     permission_classes = [IsAuthenticated]
 
     queryset = SecurityAlert.objects.select_related(
-        'user',
-        'resolved_by'
+        "user",
+        "resolved_by",
     )
 
     # =====================================================
@@ -38,18 +39,36 @@ class SecurityAlertViewSet(
 
         user = self.request.user
 
-        if user.is_staff or (
+        try:
 
-            hasattr(user, 'role') and
+            if (
+                user.is_staff
+                or (hasattr(user, "role") and user.role == "super_admin")
+            ):
 
-            user.role == 'super_admin'
-        ):
+                logger.info(
+                    "SecurityAlert queryset (admin) | user_id=%s",
+                    user.id,
+                )
 
-            return self.queryset.all()
+                return self.queryset.all()
 
-        return self.queryset.filter(
-            user=user
-        )
+            logger.info(
+                "SecurityAlert queryset (user scoped) | user_id=%s",
+                user.id,
+            )
+
+            return self.queryset.filter(user=user)
+
+        except Exception as exc:
+
+            logger.exception(
+                "Error building queryset | user_id=%s | error=%s",
+                user.id,
+                str(exc),
+            )
+
+            return SecurityAlert.objects.none()
 
     # =====================================================
     # CREATE ALERT
@@ -57,42 +76,89 @@ class SecurityAlertViewSet(
 
     def perform_create(self, serializer):
 
-        alert = serializer.save(
+        try:
 
-            user=self.request.user
-        )
+            alert = serializer.save(user=self.request.user)
 
-        # =================================================
-        # CELERY TASKS
-        # =================================================
+            logger.info(
+                "SecurityAlert created | alert_id=%s | user_id=%s",
+                alert.id,
+                self.request.user.id,
+            )
 
-        broadcast_security_alert.delay(
-            alert.id
-        )
+            broadcast_security_alert.delay(alert.id)
+            refresh_security_alert_cache.delay()
 
-        refresh_security_alert_cache.delay()
+            logger.info(
+                "SecurityAlert tasks queued | alert_id=%s",
+                alert.id,
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Failed to create SecurityAlert | user_id=%s | error=%s",
+                self.request.user.id,
+                str(exc),
+            )
+
+            raise
 
     # =====================================================
     # RESOLVE ALERT
     # =====================================================
 
-    @action(
+    @action(detail=True, methods=["post"])
+    def resolve_alert(self, request, pk=None):
 
-        detail=True,
+        try:
 
-        methods=['post']
-    )
-    def resolve_alert(
+            alert = self.get_object()
 
-        self,
-        request,
-        pk=None
-    ):
+            if alert.resolved:
 
-        alert = self.get_object()
+                logger.warning(
+                    "Alert already resolved | alert_id=%s | user_id=%s",
+                    alert.id,
+                    request.user.id,
+                )
 
-        alert.resolved = True
+                return Response(
+                    {"message": "Alert already resolved"},
+                    status=400,
+                )
 
-        alert.resolved_by = request.user
+            alert.resolved = True
+            alert.resolved_by = request.user
+            alert.resolved_at = timezone.now()
 
-        alert.resolved_at = timezone
+            alert.save()
+
+            logger.info(
+                "SecurityAlert resolved | alert_id=%s | resolved_by=%s",
+                alert.id,
+                request.user.id,
+            )
+
+            broadcast_security_alert.delay(alert.id)
+            refresh_security_alert_cache.delay()
+
+            return Response(
+                {
+                    "message": "Alert resolved successfully",
+                    "alert_id": alert.id,
+                }
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Failed to resolve alert | alert_id=%s | error=%s",
+                pk,
+                str(exc),
+            )
+
+            return Response(
+                {"error": "Failed to resolve alert"},
+                status=500,
+            )

@@ -1,6 +1,13 @@
+import logging
 from django.core.cache import cache
-
 from .models import Fine
+
+
+# =========================================================
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger("fines.cache")
 
 
 # =========================================================
@@ -9,17 +16,31 @@ from .models import Fine
 
 def cache_unpaid_fines(user_id):
 
-    total = Fine.objects.filter(
-        status='pending'
-    ).count()
+    try:
+        total = Fine.objects.filter(
+            status="pending",
+            issued_by_id=user_id
+        ).count()
 
-    cache.set(
-        f'unpaid_fines_{user_id}',
-        total,
-        timeout=3600
-    )
+        cache.set(
+            f"unpaid_fines_{user_id}",
+            total,
+            timeout=3600
+        )
 
-    return total
+        logger.info(
+            f"Unpaid fines cached | user_id={user_id} | count={total}"
+        )
+
+        return total
+
+    except Exception as exc:
+
+        logger.error(
+            f"Failed to cache unpaid fines | user_id={user_id} | error={str(exc)}"
+        )
+
+        return 0
 
 
 # =========================================================
@@ -28,18 +49,42 @@ def cache_unpaid_fines(user_id):
 
 def cache_recent_fines():
 
-    recent = list(
+    try:
+        recent = list(
+            Fine.objects.select_related(
+                "rider",
+                "guest_rider",
+                "issued_by"
+            )
+            .order_by("-created_at")[:20]
+            .values(
+                "id",
+                "amount",
+                "status",
+                "offender_type",
+                "created_at",
+                "rider_id",
+                "guest_rider_id",
+                "issued_by_id"
+            )
+        )
 
-        Fine.objects.select_related(
-            'rider',
-            'guest_rider'
-        ).order_by('-created_at')[:20].values()
-    )
+        cache.set(
+            "recent_fines",
+            recent,
+            timeout=300
+        )
 
-    cache.set(
-        'recent_fines',
-        recent,
-        timeout=300
-    )
+        logger.info(
+            f"Recent fines cached | count={len(recent)}"
+        )
 
-    return recent
+        return recent
+
+    except Exception as exc:
+
+        logger.error(
+            f"Failed to cache recent fines | error={str(exc)}"
+        )
+
+        return []

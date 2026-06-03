@@ -1,11 +1,12 @@
+import logging
 from math import radians, sin, cos, sqrt, atan2
-
 from django.utils import timezone
-
 from stages.models import Stage
 from riders.models import RiderProfile, GuestRider
-
 from .models import SuspiciousEvent
+
+logger = logging.getLogger("geo.tracking")
+
 
 # =========================================================
 # DISTANCE CALCULATION (HAVERSINE)
@@ -13,29 +14,36 @@ from .models import SuspiciousEvent
 
 def calculate_distance(lat1, lon1, lat2, lon2):
 
-    """
-    Calculate distance between two GPS points in meters
-    """
+    try:
+        R = 6371  # Earth radius in KM
 
-    R = 6371  # Earth radius in KM
+        dlat = radians(float(lat2) - float(lat1))
+        dlon = radians(float(lon2) - float(lon1))
 
-    dlat = radians(float(lat2) - float(lat1))
-    dlon = radians(float(lon2) - float(lon1))
+        a = (
+            sin(dlat / 2) ** 2
+            + cos(radians(float(lat1)))
+            * cos(radians(float(lat2)))
+            * sin(dlon / 2) ** 2
+        )
 
-    a = (
-        sin(dlat / 2) ** 2
-        + cos(radians(float(lat1)))
-        * cos(radians(float(lat2)))
-        * sin(dlon / 2) ** 2
-    )
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        distance = R * c * 1000
 
-    return R * c * 1000
+        logger.debug(
+            f"Distance calculated | lat1={lat1}, lon1={lon1}, lat2={lat2}, lon2={lon2}, distance={distance}"
+        )
+
+        return distance
+
+    except Exception as exc:
+        logger.error(f"Distance calculation failed | error={str(exc)}")
+        return 0
 
 
 # =========================================================
-# CHECK IF RIDER LEFT STAGE AREA
+# STAGE VIOLATION CHECK
 # =========================================================
 
 def is_out_of_stage(
@@ -46,10 +54,6 @@ def is_out_of_stage(
     allowed_radius=300
 ):
 
-    """
-    Returns True if rider is outside allowed radius
-    """
-
     distance = calculate_distance(
         rider_lat,
         rider_lon,
@@ -57,52 +61,50 @@ def is_out_of_stage(
         stage_lon
     )
 
-    return distance > allowed_radius
+    result = distance > allowed_radius
+
+    logger.info(
+        f"Stage check | distance={distance} | allowed={allowed_radius} | out_of_stage={result}"
+    )
+
+    return result
 
 
 # =========================================================
 # AUTO FINE GENERATOR
 # =========================================================
 
-def trigger_auto_fine(
-    user,
-    reason,
-    amount,
-    location
-):
+def trigger_auto_fine(user, reason, amount, location):
 
     from fines.models import Fine
 
-    Fine.objects.create(
+    try:
+        fine = Fine.objects.create(
+            issued_by=None,
+            rider=getattr(user, "rider_profile", None),
+            guest_rider=getattr(user, "guest_rider_profile", None),
+            reason=reason,
+            amount=amount,
+            status="pending",
+            latitude=location.get("lat"),
+            longitude=location.get("lng"),
+        )
 
-        issued_by=None,
+        logger.warning(
+            f"Auto fine triggered | fine_id={fine.id} | user_id={user.id} | reason={reason}"
+        )
 
-        rider=(
-            user.rider_profile
-            if hasattr(user, 'rider_profile')
-            else None
-        ),
+        return fine
 
-        guest_rider=(
-            user.guest_rider_profile
-            if hasattr(user, 'guest_rider_profile')
-            else None
-        ),
-
-        reason=reason,
-
-        amount=amount,
-
-        status='pending',
-
-        latitude=location.get('lat'),
-
-        longitude=location.get('lng'),
-    )
+    except Exception as exc:
+        logger.error(
+            f"Auto fine failed | user_id={getattr(user, 'id', None)} | error={str(exc)}"
+        )
+        return None
 
 
 # =========================================================
-# CHECK STAGE VIOLATION
+# STAGE VIOLATION DETECTOR
 # =========================================================
 
 def check_stage_violation(
@@ -112,71 +114,58 @@ def check_stage_violation(
     longitude=None
 ):
 
-    """
-    Detect if rider moved outside stage radius
-    """
+    try:
 
-    profile = rider or guest_rider
+        profile = rider or guest_rider
 
-    if not profile:
-        return False
+        if not profile:
+            logger.info("No profile provided for stage check")
+            return False
 
-    stage = getattr(profile, 'stage', None)
+        stage = getattr(profile, "stage", None)
 
-    if not stage:
-        return False
+        if not stage:
+            logger.info(f"No stage assigned | user={profile.user.id}")
+            return False
 
-    if not stage.latitude or not stage.longitude:
-        return False
+        if not stage.latitude or not stage.longitude:
+            logger.warning(f"Stage missing coordinates | stage_id={stage.id}")
+            return False
 
-    outside = is_out_of_stage(
-
-        rider_lat=latitude,
-
-        rider_lon=longitude,
-
-        stage_lat=stage.latitude,
-
-        stage_lon=stage.longitude,
-
-        allowed_radius=500
-    )
-
-    if outside:
-
-        SuspiciousEvent.objects.create(
-
-            rider=rider,
-
-            guest_rider=guest_rider,
-
-            event_type='out_of_stage',
-
-            description='Rider moved outside allowed stage zone',
-
-            latitude=latitude,
-
-            longitude=longitude,
+        outside = is_out_of_stage(
+            rider_lat=latitude,
+            rider_lon=longitude,
+            stage_lat=stage.latitude,
+            stage_lon=stage.longitude,
+            allowed_radius=500
         )
 
-        user = (
-            rider.user
-            if rider
-            else guest_rider.user
-        )
+        if outside:
 
-        trigger_auto_fine(
+            event = SuspiciousEvent.objects.create(
+                rider=rider,
+                guest_rider=guest_rider,
+                event_type="out_of_stage",
+                description="Rider moved outside allowed stage zone",
+                latitude=latitude,
+                longitude=longitude,
+            )
 
-            user=user,
+            logger.warning(
+                f"Suspicious event created | event_id={event.id}"
+            )
 
-            reason='Out of stage boundary',
+            user = rider.user if rider else guest_rider.user
 
-            amount=20000,
+            trigger_auto_fine(
+                user=user,
+                reason="Out of stage boundary",
+                amount=20000,
+                location={"lat": latitude, "lng": longitude},
+            )
 
-            location={
-                'lat': latitude,
-                'lng': longitude
-            }
-        )
+        return outside
 
-    return outside
+    except Exception as exc:
+        logger.error(f"Stage violation check failed | error={str(exc)}")
+        return False

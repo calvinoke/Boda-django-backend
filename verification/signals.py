@@ -1,17 +1,10 @@
+import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import (
+from .models import RiderVerification, VerificationRequest
+from .tasks import (broadcast_verification_event,refresh_verification_cache)
 
-    RiderVerification,
-
-    VerificationRequest
-)
-from .tasks import (
-
-    broadcast_verification_event,
-
-    refresh_verification_cache
-)
+logger = logging.getLogger("verification.signals")
 
 
 # =========================================================
@@ -19,40 +12,37 @@ from .tasks import (
 # =========================================================
 
 @receiver(post_save, sender=RiderVerification)
-def verification_saved_handler(
-    sender,
-    instance,
-    created,
-    **kwargs
-):
+def verification_saved_handler(sender, instance, created, **kwargs):
 
-    if created:
-
-        message = {
-
-            "event": "verification_created",
-
-            "verification_id": instance.id,
-
-            "rider": instance.rider.user.username,
-        }
-
-    else:
+    try:
+        rider_username = (
+            instance.rider.user.username
+            if instance.rider and instance.rider.user
+            else "unknown"
+        )
 
         message = {
-
-            "event": "verification_updated",
-
+            "event": "verification_created" if created else "verification_updated",
             "verification_id": instance.id,
-
-            "rider": instance.rider.user.username,
-
+            "rider": rider_username,
             "is_verified": instance.is_verified,
         }
 
-    broadcast_verification_event.delay(message)
+        broadcast_verification_event.delay(message)
+        refresh_verification_cache.delay()
 
-    refresh_verification_cache.delay()
+        logger.info(
+            "Verification event sent | verification_id=%s | event=%s",
+            instance.id,
+            message["event"]
+        )
+
+    except Exception as e:
+        logger.exception(
+            "Failed in RiderVerification signal | verification_id=%s | error=%s",
+            instance.id,
+            str(e)
+        )
 
 
 # =========================================================
@@ -60,20 +50,34 @@ def verification_saved_handler(
 # =========================================================
 
 @receiver(post_save, sender=VerificationRequest)
-def verification_request_handler(
-    sender,
-    instance,
-    created,
-    **kwargs
-):
+def verification_request_handler(sender, instance, created, **kwargs):
 
-    if created:
+    try:
+        username = (
+            instance.user.username
+            if instance.user
+            else "unknown"
+        )
 
-        broadcast_verification_event.delay({
+        if created:
 
-            "event": "verification_request_created",
+            message = {
+                "event": "verification_request_created",
+                "request_id": instance.id,
+                "username": username,
+            }
 
-            "request_id": instance.id,
+            broadcast_verification_event.delay(message)
 
-            "username": instance.user.username,
-        })
+            logger.info(
+                "Verification request created | request_id=%s | user=%s",
+                instance.id,
+                username
+            )
+
+    except Exception as e:
+        logger.exception(
+            "Failed in VerificationRequest signal | request_id=%s | error=%s",
+            instance.id,
+            str(e)
+        )

@@ -1,7 +1,9 @@
+import logging
 from django.db import models
 from django.conf import settings
 from django.core.validators import RegexValidator
 
+logger = logging.getLogger("stages.models")
 
 User = settings.AUTH_USER_MODEL
 
@@ -17,36 +19,16 @@ phone_validator = RegexValidator(
 
 
 # =========================================================
-# STAGE MODEL
+# STAGE MODEL (PRODUCTION READY)
 # =========================================================
 
 class Stage(models.Model):
 
-    name = models.CharField(
-        max_length=255,
-        unique=True,
-        db_index=True
-    )
-
-    district = models.CharField(
-        max_length=255,
-        db_index=True
-    )
-
-    division = models.CharField(
-        max_length=255,
-        db_index=True
-    )
-
-    parish = models.CharField(
-        max_length=255,
-        db_index=True
-    )
-
-    village = models.CharField(
-        max_length=255,
-        db_index=True
-    )
+    name = models.CharField(max_length=255, unique=True, db_index=True)
+    district = models.CharField(max_length=255, db_index=True)
+    division = models.CharField(max_length=255, db_index=True)
+    parish = models.CharField(max_length=255, db_index=True)
+    village = models.CharField(max_length=255, db_index=True)
 
     chairman = models.ForeignKey(
         User,
@@ -106,47 +88,45 @@ class Stage(models.Model):
         db_index=True
     )
 
-    is_active = models.BooleanField(
-        default=True,
-        db_index=True
-    )
+    is_active = models.BooleanField(default=True, db_index=True)
 
     total_registered_riders = models.PositiveIntegerField(default=0)
-
     total_guest_riders_seen = models.PositiveIntegerField(default=0)
-
     suspicious_activity_score = models.IntegerField(default=0)
 
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        db_index=True
-    )
-
-    updated_at = models.DateTimeField(
-        auto_now=True
-    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-
         ordering = ['name']
-
         indexes = [
-
             models.Index(fields=['name']),
-
             models.Index(fields=['district']),
-
             models.Index(fields=['division']),
-
-            models.Index(fields=['parish']),
-
-            models.Index(fields=['village']),
-
             models.Index(fields=['is_active']),
-
-            models.Index(fields=['latitude', 'longitude']),
         ]
 
-    def __str__(self):
+    # =====================================================
+    # SAVE WITH LOGGING + NORMALIZATION
+    # =====================================================
 
+    def save(self, *args, **kwargs):
+
+        is_new = self.pk is None
+
+        if self.name:
+            self.name = self.name.strip().title()
+
+        super().save(*args, **kwargs)
+
+        if is_new:
+            logger.info(f"Stage created | id={self.id} | name={self.name}")
+        else:
+            logger.info(f"Stage updated | id={self.id} | name={self.name}")
+
+    # =====================================================
+    # STRING REPRESENTATION
+    # =====================================================
+
+    def __str__(self):
         return self.name

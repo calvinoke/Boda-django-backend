@@ -1,13 +1,16 @@
+import logging
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator
+from django.db.models import Q
 
+logger = logging.getLogger("fines.models")
 
 User = settings.AUTH_USER_MODEL
 
 
 # =========================================================
-# FINE REASONS (CONFIGURABLE)
+# FINE TYPES
 # =========================================================
 
 class FineType(models.Model):
@@ -23,57 +26,62 @@ class FineType(models.Model):
 
     is_active = models.BooleanField(default=True)
 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [
+            models.Index(fields=["name"]),
+            models.Index(fields=["is_active"]),
+        ]
+
     def __str__(self):
         return self.name
 
 
 # =========================================================
-# MAIN FINE MODEL
+# MAIN FINE MODEL (PRODUCTION READY)
 # =========================================================
 
 class Fine(models.Model):
 
     OFFENDER_TYPE = (
-        ('rider', 'Rider'),
-        ('guest_rider', 'Guest Rider'),
+        ("rider", "Rider"),
+        ("guest_rider", "Guest Rider"),
     )
 
     STATUS_CHOICES = (
-        ('pending', 'Pending'),
-        ('paid', 'Paid'),
-        ('disputed', 'Disputed'),
-        ('cancelled', 'Cancelled'),
+        ("pending", "Pending"),
+        ("paid", "Paid"),
+        ("disputed", "Disputed"),
+        ("cancelled", "Cancelled"),
     )
-
-    # =====================================================
-    # WHO ISSUED THE FINE
-    # =====================================================
 
     issued_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
-        related_name='issued_fines'
+        related_name="issued_fines",
+        db_index=True
     )
 
-    # =====================================================
-    # OFFENDER (GENERIC DESIGN)
-    # =====================================================
-
     rider = models.ForeignKey(
-        'riders.RiderProfile',
+        "riders.RiderProfile",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='fines'
+        related_name="fines",
+        db_index=True
     )
 
     guest_rider = models.ForeignKey(
-        'riders.GuestRider',
+        "riders.GuestRider",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='fines'
+        related_name="fines",
+        db_index=True
     )
 
     offender_type = models.CharField(
@@ -82,38 +90,29 @@ class Fine(models.Model):
         db_index=True
     )
 
-    # =====================================================
-    # FINE DETAILS
-    # =====================================================
-
     fine_type = models.ForeignKey(
         FineType,
         on_delete=models.SET_NULL,
         null=True,
-        related_name='fines'
+        related_name="fines",
+        db_index=True
     )
 
     reason = models.TextField()
 
     amount = models.DecimalField(
         max_digits=10,
-        decimal_places=2
+        decimal_places=2,
+        validators=[MinValueValidator(0)]
     )
-
-    # =====================================================
-    # STAGE CONTEXT
-    # =====================================================
 
     stage = models.ForeignKey(
-        'stages.Stage',
+        "stages.Stage",
         on_delete=models.SET_NULL,
         null=True,
-        related_name='fines'
+        related_name="fines",
+        db_index=True
     )
-
-    # =====================================================
-    # LOCATION (FOR ENFORCEMENT)
-    # =====================================================
 
     latitude = models.DecimalField(
         max_digits=9,
@@ -129,30 +128,18 @@ class Fine(models.Model):
         blank=True
     )
 
-    # =====================================================
-    # EVIDENCE
-    # =====================================================
-
     evidence_image = models.ImageField(
-        upload_to='fines/evidence/',
+        upload_to="fines/evidence/",
         null=True,
         blank=True
     )
 
-    # =====================================================
-    # STATUS
-    # =====================================================
-
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
-        default='pending',
+        default="pending",
         db_index=True
     )
-
-    # =====================================================
-    # PAYMENT TRACKING
-    # =====================================================
 
     paid_at = models.DateTimeField(null=True, blank=True)
 
@@ -162,12 +149,50 @@ class Fine(models.Model):
         blank=True
     )
 
-    # =====================================================
-    # AUDIT
-    # =====================================================
-
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # =====================================================
+    # DATABASE-LEVEL INTEGRITY (IMPORTANT)
+    # =====================================================
+
+    class Meta:
+        ordering = ["-created_at"]
+
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["offender_type", "status"]),
+            models.Index(fields=["stage", "status"]),
+            models.Index(fields=["fine_type"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+        constraints = [
+            models.CheckConstraint(
+                name="fine_offender_consistency",
+                check=(
+                    Q(offender_type="rider", guest_rider__isnull=True)
+                    & Q(rider__isnull=False)
+                )
+                |
+                (
+                    Q(offender_type="guest_rider", rider__isnull=True)
+                    & Q(guest_rider__isnull=False)
+                )
+            )
+        ]
+
+    # =====================================================
+    # CLEAN (KEEP LIGHTWEIGHT ONLY)
+    # =====================================================
+
+    def clean(self):
+        # Keep validation minimal in production
+        if self.offender_type == "rider" and not self.rider:
+            raise ValueError("Rider required for rider fines")
+
+        if self.offender_type == "guest_rider" and not self.guest_rider:
+            raise ValueError("Guest rider required for guest fines")
+
     def __str__(self):
-        return f"{self.offender_type} - {self.amount} - {self.status}"
+        return f"{self.offender_type} | {self.amount} | {self.status}"

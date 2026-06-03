@@ -1,28 +1,27 @@
+import logging
+
 from django.core.cache import cache
 from rest_framework import viewsets
-from rest_framework.permissions import (
-    IsAuthenticated
-)
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
 from .models import Notification
-from .serializers import (
-    NotificationSerializer
-)
-from .tasks import (
-    refresh_notifications_cache
-)
+from .serializers import NotificationSerializer
+from .tasks import refresh_notifications_cache
+
+
+# =========================================================
+# LOGGER
+# =========================================================
+
+logger = logging.getLogger("notifications.api")
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
 
-    serializer_class = (
-        NotificationSerializer
-    )
-
-    permission_classes = [
-        IsAuthenticated
-    ]
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
 
     # =====================================================
     # GET QUERYSET
@@ -32,87 +31,116 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
         user = self.request.user
 
-        # =============================================
-        # ADMINS SEE ALL
-        # =============================================
+        try:
 
-        if hasattr(user, 'role') and user.role in [
+            # ADMIN USERS
+            if hasattr(user, "role") and user.role in [
+                "super_admin",
+                "stage_chairman",
+                "stage_secretary",
+                "stage_defense",
+            ]:
 
-            'super_admin',
+                logger.info(f"Admin access notifications | user_id={user.id}")
+                return Notification.objects.all()
 
-            'stage_chairman',
+            # NORMAL USERS
+            logger.info(f"User access notifications | user_id={user.id}")
 
-            'stage_secretary',
+            return Notification.objects.filter(user=user)
 
-            'stage_defense'
-        ]:
+        except Exception as exc:
 
-            return Notification.objects.all()
+            logger.error(
+                f"Notification queryset error | user_id={user.id} | error={str(exc)}"
+            )
 
-        # =============================================
-        # NORMAL USERS SEE OWN
-        # =============================================
-
-        return Notification.objects.filter(
-            user=user
-        )
+            return Notification.objects.none()
 
     # =====================================================
     # MARK AS READ
     # =====================================================
 
-    @action(
-        detail=True,
-        methods=['post']
-    )
-    def mark_as_read(
-        self,
-        request,
-        pk=None
-    ):
+    @action(detail=True, methods=["post"])
+    def mark_as_read(self, request, pk=None):
 
-        notification = self.get_object()
+        try:
 
-        notification.is_read = True
+            notification = self.get_object()
+            notification.is_read = True
+            notification.save()
 
-        notification.save()
+            logger.info(
+                f"Notification marked as read | notification_id={notification.id} | user_id={request.user.id}"
+            )
 
-        refresh_notifications_cache.delay(
-            request.user.id
-        )
+            try:
+                refresh_notifications_cache.delay(request.user.id)
+                logger.info(
+                    f"Cache refresh triggered | user_id={request.user.id}"
+                )
+            except Exception as exc:
+                logger.error(
+                    f"Cache refresh failed | user_id={request.user.id} | error={str(exc)}"
+                )
 
-        return Response({
+            return Response({
+                "message": "Notification marked as read"
+            })
 
-            "message":
-            "Notification marked as read"
-        })
+        except Exception as exc:
+
+            logger.error(
+                f"Mark as read failed | user_id={request.user.id} | error={str(exc)}"
+            )
+
+            return Response(
+                {"error": "Failed to mark notification as read"},
+                status=500
+            )
 
     # =====================================================
     # GET CACHED NOTIFICATIONS
     # =====================================================
 
-    @action(
-        detail=False,
-        methods=['get']
-    )
+    @action(detail=False, methods=["get"])
     def cached(self, request):
 
-        cache_key = (
-            f"user_notifications_{request.user.id}"
-        )
+        try:
 
-        data = cache.get(cache_key)
+            cache_key = f"user_notifications_{request.user.id}"
+            data = cache.get(cache_key)
 
-        if not data:
+            if not data:
 
-            refresh_notifications_cache.delay(
-                request.user.id
+                logger.info(
+                    f"Cache miss for notifications | user_id={request.user.id}"
+                )
+
+                try:
+                    refresh_notifications_cache.delay(request.user.id)
+                except Exception as exc:
+                    logger.error(
+                        f"Cache rebuild failed | user_id={request.user.id} | error={str(exc)}"
+                    )
+
+                return Response({
+                    "message": "Cache rebuilding"
+                })
+
+            logger.info(
+                f"Cache hit for notifications | user_id={request.user.id}"
             )
 
-            return Response({
+            return Response(data)
 
-                "message":
-                "Cache rebuilding"
-            })
+        except Exception as exc:
 
-        return Response(data)
+            logger.error(
+                f"Cached notifications error | user_id={request.user.id} | error={str(exc)}"
+            )
+
+            return Response(
+                {"error": "Failed to fetch cached notifications"},
+                status=500
+            )

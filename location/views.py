@@ -1,26 +1,16 @@
+import logging
+
 from django.core.cache import cache
-
 from rest_framework import viewsets
-
 from rest_framework.decorators import action
-
 from rest_framework.response import Response
-
 from rest_framework.permissions import IsAuthenticated
 
-from .models import (
-    RiderLocation,
-    SuspiciousEvent
-)
+from .models import RiderLocation, SuspiciousEvent
+from .serializers import RiderLocationSerializer, SuspiciousEventSerializer
+from .tasks import save_location_task
 
-from .serializers import (
-    RiderLocationSerializer,
-    SuspiciousEventSerializer
-)
-
-from .tasks import (
-    save_location_task
-)
+logger = logging.getLogger("gps.api")
 
 
 # =========================================================
@@ -30,79 +20,83 @@ from .tasks import (
 class LocationViewSet(viewsets.ModelViewSet):
 
     serializer_class = RiderLocationSerializer
-
     permission_classes = [IsAuthenticated]
 
     # =====================================================
-    # OPTIMIZED QUERYSET
+    # QUERYSET
     # =====================================================
 
     def get_queryset(self):
 
-        queryset = cache.get("live_locations")
+        try:
 
-        if queryset:
+            cache_key = "live_locations_v1"
+            cached = cache.get(cache_key)
+
+            if cached:
+                logger.info("Live locations cache hit")
+                return cached
+
+            queryset = RiderLocation.objects.select_related(
+                "rider__user",
+                "guest_rider__user"
+            ).all()
+
+            cache.set(cache_key, queryset, timeout=30)
+
+            logger.info("Live locations cache rebuilt")
 
             return queryset
 
-        queryset = RiderLocation.objects.select_related(
-
-            'rider__user',
-
-            'guest_rider__user'
-        ).all()
-
-        cache.set(
-
-            "live_locations",
-
-            queryset,
-
-            timeout=30
-        )
-
-        return queryset
+        except Exception as exc:
+            logger.error(f"get_queryset failed | error={str(exc)}")
+            return RiderLocation.objects.none()
 
     # =====================================================
-    # LIVE LOCATION UPDATE
+    # UPDATE LOCATION
     # =====================================================
 
-    @action(
-        detail=False,
-        methods=['post']
-    )
+    @action(detail=False, methods=["post"])
     def update_location(self, request):
 
-        user = request.user
+        try:
+            user = request.user
+            data = request.data
 
-        data = request.data
+            latitude = data.get("latitude")
+            longitude = data.get("longitude")
 
-        # =================================================
-        # SEND TO CELERY
-        # =================================================
+            if latitude is None or longitude is None:
+                logger.warning(f"Invalid GPS payload | user_id={user.id}")
+                return Response(
+                    {"error": "latitude and longitude required"},
+                    status=400
+                )
 
-        save_location_task.delay(
+            save_location_task.delay(
+                user_id=user.id,
+                latitude=latitude,
+                longitude=longitude,
+                speed=data.get("speed", 0),
+                heading=data.get("heading")
+            )
 
-            user_id=user.id,
+            cache.delete("live_locations_v1")
 
-            latitude=data.get('latitude'),
+            logger.info(f"Location queued | user_id={user.id}")
 
-            longitude=data.get('longitude'),
+            return Response({
+                "status": "success",
+                "message": "Location queued for processing"
+            })
 
-            speed=data.get('speed', 0),
+        except Exception as exc:
+            logger.error(f"update_location failed | error={str(exc)}")
 
-            heading=data.get('heading')
-        )
-
-        # CLEAR CACHE
-        cache.delete("live_locations")
-
-        return Response({
-
-            "status": "success",
-
-            "message": "Location queued for processing"
-        })
+            return Response(
+                {"error": "internal server error"},
+                status=500
+            )
 
 
 # =========================================================
@@ -112,35 +106,29 @@ class LocationViewSet(viewsets.ModelViewSet):
 class SuspiciousEventViewSet(viewsets.ModelViewSet):
 
     serializer_class = SuspiciousEventSerializer
-
     permission_classes = [IsAuthenticated]
-
-    # =====================================================
-    # OPTIMIZED QUERYSET
-    # =====================================================
 
     def get_queryset(self):
 
-        queryset = cache.get("suspicious_events")
+        try:
+            cache_key = "suspicious_events_v1"
+            cached = cache.get(cache_key)
 
-        if queryset:
+            if cached:
+                logger.info("Suspicious events cache hit")
+                return cached
+
+            queryset = SuspiciousEvent.objects.select_related(
+                "rider__user",
+                "guest_rider__user"
+            ).all()
+
+            cache.set(cache_key, queryset, timeout=60)
+
+            logger.info("Suspicious events cache rebuilt")
 
             return queryset
 
-        queryset = SuspiciousEvent.objects.select_related(
-
-            'rider__user',
-
-            'guest_rider__user'
-        ).all()
-
-        cache.set(
-
-            "suspicious_events",
-
-            queryset,
-
-            timeout=60
-        )
-
-        return queryset
+        except Exception as exc:
+            logger.error(f"suspicious get_queryset failed | error={str(exc)}")
+            return SuspiciousEvent.objects.none()

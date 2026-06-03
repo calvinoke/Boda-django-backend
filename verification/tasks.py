@@ -1,14 +1,13 @@
+import logging
+
 from celery import shared_task
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.core.cache import cache
 from django.utils import timezone
-from .models import (
+from .models import RiderVerification, VerificationRequest
 
-    RiderVerification,
-
-    VerificationRequest
-)
+logger = logging.getLogger("verification.tasks")
 
 
 # =========================================================
@@ -18,21 +17,28 @@ from .models import (
 @shared_task
 def broadcast_verification_event(message):
 
-    channel_layer = get_channel_layer()
+    try:
+        channel_layer = get_channel_layer()
 
-    async_to_sync(
-        channel_layer.group_send
-    )(
+        async_to_sync(channel_layer.group_send)(
+            "verification",
+            {
+                "type": "send_verification_event",
+                "message": message,
+            }
+        )
 
-        "verification",
+        logger.info(
+            "Verification broadcast sent | event=%s",
+            message.get("event", "unknown")
+        )
 
-        {
-
-            "type": "send_verification_event",
-
-            "message": message,
-        }
-    )
+    except Exception as e:
+        logger.exception(
+            "Failed to broadcast verification event | error=%s | message=%s",
+            str(e),
+            message
+        )
 
 
 # =========================================================
@@ -42,35 +48,38 @@ def broadcast_verification_event(message):
 @shared_task
 def refresh_verification_cache():
 
-    verifications = list(
-
-        RiderVerification.objects.select_related(
-            'rider',
-            'verified_by'
-        ).values(
-
-            'id',
-
-            'rider_id',
-
-            'is_verified',
-
-            'verified_at',
-
-            'submitted_at'
+    try:
+        verifications = list(
+            RiderVerification.objects.select_related(
+                'rider',
+                'verified_by'
+            ).values(
+                'id',
+                'rider_id',
+                'is_verified',
+                'verified_at',
+                'submitted_at'
+            )
         )
-    )
 
-    cache.set(
+        cache.set(
+            "verification_cache",
+            verifications,
+            timeout=60 * 10
+        )
 
-        "verification_cache",
+        logger.info(
+            "Verification cache refreshed | count=%s",
+            len(verifications)
+        )
 
-        verifications,
+        return "Verification cache refreshed"
 
-        timeout=60 * 10
-    )
-
-    return "Verification cache refreshed"
+    except Exception as e:
+        logger.exception(
+            "Failed to refresh verification cache | error=%s",
+            str(e)
+        )
 
 
 # =========================================================
@@ -84,42 +93,66 @@ def approve_verification_task(
 ):
 
     try:
-
         request = VerificationRequest.objects.select_related(
             'user'
         ).get(id=verification_request_id)
 
-        verification = RiderVerification.objects.get(
-            rider__user=request.user
-        )
+        verification = RiderVerification.objects.select_related(
+            'rider'
+        ).get(rider__user=request.user)
+
+        # =================================================
+        # UPDATE VERIFICATION
+        # =================================================
 
         verification.is_verified = True
-
         verification.verified_by_id = admin_user_id
-
         verification.verified_at = timezone.now()
-
         verification.save()
 
-        request.status = "approved"
+        # =================================================
+        # UPDATE REQUEST
+        # =================================================
 
+        request.status = "approved"
         request.save()
+
+        logger.info(
+            "Verification approved | request_id=%s | user_id=%s | admin_id=%s",
+            request.id,
+            request.user_id,
+            admin_user_id
+        )
 
         # =================================================
         # WEBSOCKET BROADCAST
         # =================================================
 
         broadcast_verification_event.delay({
-
             "event": "verification_approved",
-
             "user_id": request.user.id,
-
             "username": request.user.username,
         })
 
         refresh_verification_cache.delay()
 
-    except Exception as e:
+        return "Verification approved successfully"
 
-        print(str(e))
+    except VerificationRequest.DoesNotExist:
+        logger.warning(
+            "Verification request not found | id=%s",
+            verification_request_id
+        )
+
+    except RiderVerification.DoesNotExist:
+        logger.warning(
+            "Rider verification not found for request | request_id=%s",
+            verification_request_id
+        )
+
+    except Exception as e:
+        logger.exception(
+            "Unexpected error in approve_verification_task | request_id=%s | error=%s",
+            verification_request_id,
+            str(e)
+        )

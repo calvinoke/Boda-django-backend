@@ -1,10 +1,9 @@
+import logging
 from rest_framework import serializers
-from .models import (
+from .models import RiderVerification, VerificationRequest
 
-    RiderVerification,
 
-    VerificationRequest
-)
+logger = logging.getLogger("verification.serializers")
 
 
 # =========================================================
@@ -13,30 +12,69 @@ from .models import (
 
 class RiderVerificationSerializer(serializers.ModelSerializer):
 
-    rider_username = serializers.CharField(
-        source='rider.user.username',
-        read_only=True
-    )
-
-    verified_by_username = serializers.CharField(
-        source='verified_by.username',
-        read_only=True
-    )
+    rider_username = serializers.SerializerMethodField()
+    verified_by_username = serializers.SerializerMethodField()
 
     class Meta:
-
         model = RiderVerification
 
-        fields = '__all__'
+        fields = [
+            "id",
+            "rider",
+            "rider_username",
+            "national_id_front",
+            "national_id_back",
+            "driving_license",
+            "passport_photo",
+            "police_clearance",
+            "is_verified",
+            "verified_by",
+            "verified_by_username",
+            "verified_at",
+            "submitted_at",
+            "updated_at",
+        ]
 
-        read_only_fields = (
+        read_only_fields = [
+            "is_verified",
+            "verified_by",
+            "verified_at",
+            "submitted_at",
+            "updated_at",
+        ]
 
-            'is_verified',
+    # =====================================================
+    # SAFE FIELD RESOLVERS
+    # =====================================================
 
-            'verified_by',
+    def get_rider_username(self, obj):
+        try:
+            return obj.rider.user.username if obj.rider and obj.rider.user else None
+        except Exception as e:
+            logger.warning(f"rider_username resolve failed: {e}")
+            return None
 
-            'verified_at',
-        )
+    def get_verified_by_username(self, obj):
+        try:
+            return obj.verified_by.username if obj.verified_by else None
+        except Exception as e:
+            logger.warning(f"verified_by_username resolve failed: {e}")
+            return None
+
+    # =====================================================
+    # VALIDATION RULES
+    # =====================================================
+
+    def validate(self, data):
+
+        rider = data.get("rider")
+
+        if not rider:
+            raise serializers.ValidationError(
+                "Rider is required for verification."
+            )
+
+        return data
 
 
 # =========================================================
@@ -45,13 +83,48 @@ class RiderVerificationSerializer(serializers.ModelSerializer):
 
 class VerificationRequestSerializer(serializers.ModelSerializer):
 
-    username = serializers.CharField(
-        source='user.username',
-        read_only=True
-    )
+    username = serializers.SerializerMethodField()
 
     class Meta:
-
         model = VerificationRequest
 
-        fields = '__all__'
+        fields = [
+            "id",
+            "user",
+            "username",
+            "submitted_by",
+            "status",
+            "notes",
+            "created_at",
+        ]
+
+        read_only_fields = [
+            "created_at",
+            "status",
+        ]
+
+    # =====================================================
+    # SAFE USERNAME ACCESS
+    # =====================================================
+
+    def get_username(self, obj):
+        try:
+            return obj.user.username if obj.user else None
+        except Exception as e:
+            logger.warning(f"username resolve failed: {e}")
+            return None
+
+    # =====================================================
+    # VALIDATION RULES
+    # =====================================================
+
+    def validate(self, data):
+
+        user = data.get("user")
+
+        if not user:
+            raise serializers.ValidationError(
+                "User is required for verification request."
+            )
+
+        return data
