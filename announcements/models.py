@@ -68,6 +68,10 @@ class Announcement(models.Model):
     
 class Condolence(models.Model):
 
+    # =====================================================
+    # STATUS CHOICES
+    # =====================================================
+
     STATUS_CHOICES = (
 
         ('pending', 'Pending'),
@@ -76,6 +80,29 @@ class Condolence(models.Model):
 
         ('rejected', 'Rejected'),
     )
+
+    # =====================================================
+    # TARGET ROLE CHOICES
+    # =====================================================
+
+    ROLE_CHOICES = (
+
+        ('super_admin', 'Super Admin'),
+
+        ('stage_chairman', 'Stage Chairman'),
+
+        ('stage_secretary', 'Stage Secretary'),
+
+        ('stage_defense', 'Stage Defense'),
+
+        ('rider', 'Rider'),
+
+        ('guest_rider', 'Guest Rider'),
+    )
+
+    # =====================================================
+    # RELATIONSHIPS
+    # =====================================================
 
     rider = models.ForeignKey(
         'riders.RiderProfile',
@@ -86,8 +113,21 @@ class Condolence(models.Model):
     reported_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
-        null=True
+        null=True,
+        related_name='reported_condolences'
     )
+
+    verified_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_condolences'
+    )
+
+    # =====================================================
+    # CONDOLENCE DETAILS
+    # =====================================================
 
     description = models.TextField()
 
@@ -107,24 +147,25 @@ class Condolence(models.Model):
     )
 
     target_role = models.CharField(
-    max_length=30,
-    choices=User.ROLE_CHOICES,
-    null=True,
-    blank=True,
-    db_index=True
-)
-
-    verified_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
+        max_length=30,
+        choices=ROLE_CHOICES,
         null=True,
         blank=True,
-        related_name='verified_condolences'
+        db_index=True
     )
 
+    # =====================================================
+    # TIMESTAMPS
+    # =====================================================
+
     created_at = models.DateTimeField(
-        auto_now_add=True
+        auto_now_add=True,
+        db_index=True
     )
+
+    # =====================================================
+    # META
+    # =====================================================
 
     class Meta:
 
@@ -135,8 +176,17 @@ class Condolence(models.Model):
             models.Index(fields=['status']),
 
             models.Index(fields=['date_of_death']),
+
+            models.Index(fields=['target_role']),
         ]
+
+    # =====================================================
+    # STRING REPRESENTATION
+    # =====================================================
 
     def __str__(self):
 
-        return f"Condolence - {self.rider.user.email}"
+        return (
+            f"Condolence - "
+            f"{self.rider.user.email}"
+        )

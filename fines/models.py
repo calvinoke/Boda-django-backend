@@ -14,7 +14,6 @@ User = settings.AUTH_USER_MODEL
 # =========================================================
 
 class FineType(models.Model):
-
     name = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True, null=True)
 
@@ -41,7 +40,7 @@ class FineType(models.Model):
 
 
 # =========================================================
-# MAIN FINE MODEL (PRODUCTION READY)
+# MAIN FINE MODEL
 # =========================================================
 
 class Fine(models.Model):
@@ -153,7 +152,7 @@ class Fine(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # =====================================================
-    # DATABASE-LEVEL INTEGRITY (IMPORTANT)
+    # META + DATABASE CONSTRAINTS (FIXED)
     # =====================================================
 
     class Meta:
@@ -170,29 +169,32 @@ class Fine(models.Model):
         constraints = [
             models.CheckConstraint(
                 name="fine_offender_consistency",
-                check=(
-                    Q(offender_type="rider", guest_rider__isnull=True)
-                    & Q(rider__isnull=False)
-                )
-                |
-                (
-                    Q(offender_type="guest_rider", rider__isnull=True)
-                    & Q(guest_rider__isnull=False)
-                )
+                condition=(
+                    Q(
+                        offender_type="rider",
+                        rider__isnull=False,
+                        guest_rider__isnull=True
+                    )
+                    |
+                    Q(
+                        offender_type="guest_rider",
+                        guest_rider__isnull=False,
+                        rider__isnull=True
+                    )
+                ),
             )
         ]
 
     # =====================================================
-    # CLEAN (KEEP LIGHTWEIGHT ONLY)
+    # CLEAN VALIDATION (SAFE + LIGHTWEIGHT)
     # =====================================================
 
     def clean(self):
-        # Keep validation minimal in production
         if self.offender_type == "rider" and not self.rider:
-            raise ValueError("Rider required for rider fines")
+            raise ValueError("Rider is required for rider fines")
 
         if self.offender_type == "guest_rider" and not self.guest_rider:
-            raise ValueError("Guest rider required for guest fines")
+            raise ValueError("Guest rider is required for guest fines")
 
     def __str__(self):
         return f"{self.offender_type} | {self.amount} | {self.status}"

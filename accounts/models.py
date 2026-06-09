@@ -130,3 +130,37 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} - {self.role}"
+    
+
+class SystemLog(models.Model):
+    ACTION_TYPES = (
+        ("OTP_VERIFIED", "OTP_VERIFIED"),
+        ("PASSWORD_RESET", "PASSWORD_RESET"),
+        ("USER_CREATED", "USER_CREATED"),
+        ("LOGIN", "LOGIN"),
+        ("OTHER", "OTHER"),
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="system_logs"
+    )
+
+    action = models.CharField(max_length=50, choices=ACTION_TYPES)
+
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["action"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.action} - {self.created_at}"
