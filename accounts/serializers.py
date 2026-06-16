@@ -140,8 +140,6 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-
-        # ❌ NEVER USE "__all__" IN AUTH MODELS
         fields = [
             "id",
             "first_name",
@@ -164,8 +162,6 @@ class DynamicUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-
-        # ⚠️ allowed but controlled via to_representation
         fields = "__all__"
 
     def to_representation(self, instance):
@@ -208,7 +204,18 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
 
 
 # =========================================================
-# OTP SERIALIZERS
+# OTP SEND SERIALIZER (🔥 ADDED MISSING ONE)
+# =========================================================
+
+class OTPSendSerializer(serializers.Serializer):
+    phone_number = serializers.CharField()
+
+    def validate_phone_number(self, value):
+        return normalize_phone(value)
+
+
+# =========================================================
+# OTP VERIFY SERIALIZER
 # =========================================================
 
 class OTPVerificationSerializer(serializers.Serializer):
@@ -219,12 +226,20 @@ class OTPVerificationSerializer(serializers.Serializer):
         return normalize_phone(value)
 
 
+# =========================================================
+# PASSWORD RESET REQUEST SERIALIZER
+# =========================================================
+
 class PasswordResetRequestSerializer(serializers.Serializer):
     phone_number = serializers.CharField()
 
     def validate_phone_number(self, value):
         return normalize_phone(value)
 
+
+# =========================================================
+# PASSWORD RESET CONFIRM SERIALIZER
+# =========================================================
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     phone_number = serializers.CharField()

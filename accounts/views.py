@@ -1,12 +1,14 @@
 import secrets
 import hashlib
 import logging
+
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
+
 from rest_framework import generics, viewsets, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from django.contrib.auth.hashers import make_password
+
 from .models import User, SystemLog
 from .serializers import (
     RegisterSerializer,
@@ -15,12 +17,11 @@ from .serializers import (
     DynamicUserSerializer,
     OTPVerificationSerializer,
     PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer
+    PasswordResetConfirmSerializer,
+    OTPSendSerializer,   # ✅ ADDED MISSING SERIALIZER
 )
 
-from .permissions import IsManagementRole
 from .tasks import broadcast_user_event, refresh_users_cache, send_otp_task
-
 
 # =========================================================
 # LOGGING SETUP
@@ -121,7 +122,51 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 # =========================================================
-# OTP VERIFY VIEW (SECURE)
+# OTP SEND VIEW (🔥 MISSING ENDPOINT ADDED)
+# =========================================================
+
+class OTPSendView(generics.GenericAPIView):
+    serializer_class = OTPSendSerializer
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        phone = serializer.validated_data["phone_number"]
+
+        logger.info(f"OTP send request: {phone}")
+
+        if rate_limited(phone):
+            return Response(
+                {"error": "Too many OTP requests"},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        # OPTIONAL: ensure user exists (remove if you want public OTP)
+        if not User.objects.filter(phone_number=phone).exists():
+            return Response({"error": "User not found"}, status=404)
+
+        otp_code = str(secrets.randbelow(900000) + 100000)
+
+        cache.set(
+            f"otp:{phone}",
+            hash_otp(otp_code),
+            timeout=300,
+        )
+
+        send_otp_task.delay(phone, otp_code)
+
+        logger.info(f"OTP sent successfully: {phone}")
+
+        return Response(
+            {"message": "OTP sent successfully"},
+            status=200,
+        )
+
+
+# =========================================================
+# OTP VERIFY VIEW
 # =========================================================
 
 class OTPVerifyView(generics.GenericAPIView):
@@ -138,7 +183,6 @@ class OTPVerifyView(generics.GenericAPIView):
         logger.info(f"OTP verification attempt: {phone}")
 
         if rate_limited(phone):
-            logger.warning(f"OTP rate limit exceeded: {phone}")
             return Response(
                 {"error": "Too many attempts. Try again later."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -147,11 +191,9 @@ class OTPVerifyView(generics.GenericAPIView):
         cached_otp = cache.get(f"otp:{phone}")
 
         if not cached_otp:
-            logger.warning(f"OTP expired: {phone}")
             return Response({"error": "OTP expired or invalid"}, status=400)
 
         if not verify_otp(otp, cached_otp):
-            logger.warning(f"Invalid OTP: {phone}")
             return Response({"error": "Invalid OTP"}, status=400)
 
         cache.delete(f"otp:{phone}")
@@ -161,8 +203,6 @@ class OTPVerifyView(generics.GenericAPIView):
             action="OTP_VERIFIED",
             metadata={"phone": phone},
         )
-
-        logger.info(f"OTP verified successfully: {phone}")
 
         return Response(
             {"message": "OTP verified successfully", "phone_number": phone},
@@ -184,14 +224,10 @@ class PasswordResetRequestView(generics.GenericAPIView):
 
         phone = serializer.validated_data["phone_number"]
 
-        logger.info(f"Password reset request: {phone}")
-
         if rate_limited(phone):
-            logger.warning(f"Password reset rate limit hit: {phone}")
             return Response({"error": "Too many attempts"}, status=429)
 
         if not User.objects.filter(phone_number=phone).exists():
-            logger.warning(f"Password reset for unknown user: {phone}")
             return Response({"error": "User does not exist"}, status=404)
 
         otp_code = str(secrets.randbelow(900000) + 100000)
@@ -203,8 +239,6 @@ class PasswordResetRequestView(generics.GenericAPIView):
         )
 
         send_otp_task.delay(phone, otp_code)
-
-        logger.info(f"OTP sent for password reset: {phone}")
 
         return Response({"message": "OTP sent successfully"}, status=200)
 
@@ -225,18 +259,14 @@ class PasswordResetConfirmView(generics.GenericAPIView):
         otp = serializer.validated_data["otp_code"]
         new_password = serializer.validated_data["new_password"]
 
-        logger.info(f"Password reset attempt: {phone}")
-
         cached_otp = cache.get(f"otp:{phone}")
 
         if not cached_otp or not verify_otp(otp, cached_otp):
-            logger.warning(f"Password reset failed OTP: {phone}")
             return Response({"error": "Invalid OTP"}, status=400)
 
         try:
             user = User.objects.get(phone_number=phone)
         except User.DoesNotExist:
-            logger.error(f"Password reset user not found: {phone}")
             return Response({"error": "User not found"}, status=404)
 
         user.set_password(new_password)
@@ -249,7 +279,5 @@ class PasswordResetConfirmView(generics.GenericAPIView):
             action="PASSWORD_RESET",
             metadata={"phone": phone},
         )
-
-        logger.info(f"Password reset successful: {phone}")
 
         return Response({"message": "Password reset successful"}, status=200)
