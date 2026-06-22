@@ -15,7 +15,7 @@ urlpatterns = [
     # =====================================================
     path('api/accounts/', include('accounts.urls')),
     path('api/riders/', include('riders.urls')),
-    path('api/contacts/', include('contacts.urls')),  # ✅ FIXED (MISSING BEFORE)
+    path('api/contacts/', include('contacts.urls')), 
     path('api/location/', include('location.urls')),
     path('api/verification/', include('verification.urls')),
     path('api/announcements/', include('announcements.urls')),

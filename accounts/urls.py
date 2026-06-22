@@ -2,14 +2,16 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     RegisterView,
+    LoginView,
+    LogoutView,
     UserViewSet,
     OTPVerifyView,
     OTPSendView,
     PasswordResetRequestView,
     PasswordResetConfirmView,
+    VerifyPhoneView,
 )
 from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
     TokenRefreshView,
 )
 
@@ -22,14 +24,16 @@ urlpatterns = [
     # AUTH - JWT
     # ======================
     path('register/', RegisterView.as_view(), name='register'),
-    path('login/', TokenObtainPairView.as_view(), name='login'),
+    path('login/', LoginView.as_view(), name='login'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('logout/', LogoutView.as_view(), name='logout'),
 
     # ======================
     # OTP SYSTEM
     # ======================
     path('otp/send/', OTPSendView.as_view(), name='otp_send'),
     path('otp/verify/', OTPVerifyView.as_view(), name='otp_verify'),
+    path('verify-phone/', VerifyPhoneView.as_view(), name='verify_phone'),
 
     # ======================
     # PASSWORD RESET
