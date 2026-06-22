@@ -37,6 +37,8 @@ class User(AbstractUser):
     email = models.EmailField(
         unique=True,
         db_index=True,
+        null=True,  # ← Allow null for existing rows
+        blank=True,  # ← Allow blank in forms
         validators=[EmailValidator()]
     )
 
@@ -96,7 +98,7 @@ class User(AbstractUser):
     # =====================================================
 
     USERNAME_FIELD = 'username'
-    REQUIRED_FIELDS = ['phone_number', 'email']
+    REQUIRED_FIELDS = ['phone_number']  # ← Removed email from required fields
 
     # =====================================================
     # META

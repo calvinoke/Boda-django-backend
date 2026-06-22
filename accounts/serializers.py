@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.cache import cache
 from django.utils import timezone
-from django.core.validators import RegexValidator
+from django.core.validators import RegexValidator, EmailValidator
 
 logger = logging.getLogger("accounts.serializers")
 
@@ -115,21 +115,47 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "token", "role"]
 
+    def validate_email(self, value):
+        """Make email required and validate it"""
+        # Email is now required
+        if not value:
+            raise serializers.ValidationError("Email is required")
+        
+        # Clean and validate email
+        value = value.lower().strip()
+        
+        # Additional email validation using Django's EmailValidator
+        email_validator = EmailValidator()
+        try:
+            email_validator(value)
+        except Exception:
+            raise serializers.ValidationError("Enter a valid email address")
+        
+        # Check if email already exists
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Email already registered")
+        
+        return value
+
     def validate_phone_number(self, value):
         return normalize_phone(value)
     
-    def validate_email(self, value):
-        if value:
-            value = value.lower().strip()
-            # Check if email already exists
-            if User.objects.filter(email=value).exists():
-                raise serializers.ValidationError("Email already registered")
-        return value
-    
     def validate_username(self, value):
         value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Username is required")
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError("Username already taken")
+        return value
+
+    def validate_first_name(self, value):
+        if not value:
+            raise serializers.ValidationError("First name is required")
+        return value
+
+    def validate_last_name(self, value):
+        if not value:
+            raise serializers.ValidationError("Last name is required")
         return value
 
     def create(self, validated_data):
@@ -144,17 +170,18 @@ class RegisterSerializer(serializers.ModelSerializer):
                 first_name=validated_data["first_name"],
                 last_name=validated_data["last_name"],
                 username=validated_data["username"],
-                email=validated_data["email"],
+                email=validated_data["email"],  # Now required
                 phone_number=validated_data["phone_number"],
                 role=role,  # Always guest_rider or rider
                 password=validated_data["password"],
             )
 
             logger.info(
-                "User registered | user_id=%s | username=%s | role=%s",
+                "User registered | user_id=%s | username=%s | role=%s | email=%s",
                 user.id,
                 user.username,
-                user.role
+                user.role,
+                user.email
             )
 
             return user
@@ -250,20 +277,30 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
         ]
     
     def validate_username(self, value):
-        value = value.strip()
-        if User.objects.filter(username=value).exclude(id=self.instance.id).exists():
-            raise serializers.ValidationError("Username already taken")
+        if value:
+            value = value.strip()
+            if User.objects.filter(username=value).exclude(id=self.instance.id).exists():
+                raise serializers.ValidationError("Username already taken")
         return value
     
     def validate_email(self, value):
         if value:
             value = value.lower().strip()
+            # Validate email format
+            email_validator = EmailValidator()
+            try:
+                email_validator(value)
+            except Exception:
+                raise serializers.ValidationError("Enter a valid email address")
+            
             if User.objects.filter(email=value).exclude(id=self.instance.id).exists():
                 raise serializers.ValidationError("Email already registered")
         return value
     
     def validate_phone_number(self, value):
-        return normalize_phone(value)
+        if value:
+            return normalize_phone(value)
+        return value
     
     def validate_new_phone_number(self, value):
         if value:
@@ -298,8 +335,10 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
             instance.is_phone_verified = False
         
         # Update other fields
-        instance.username = validated_data.get('username', instance.username)
-        instance.email = validated_data.get('email', instance.email)
+        if validated_data.get('username'):
+            instance.username = validated_data['username']
+        if validated_data.get('email'):
+            instance.email = validated_data['email']
         instance.save()
         
         return instance
