@@ -26,7 +26,7 @@ PRIVILEGED_ROLES = {
     "stage_defense",
 }
 
-PUBLIC_ALLOWED_ROLES = {"guest_rider", "rider"}  # Roles users can register with
+PUBLIC_ALLOWED_ROLES = {"guest_rider", "rider"}
 
 # =========================================================
 # PHONE VALIDATOR
@@ -48,13 +48,11 @@ def normalize_phone(phone):
 
         phone = phone.strip()
 
-        # 07XXXXXXXX → +2567XXXXXXXX
         if re.match(r"^0[0-9]{9}$", phone):
             normalized = "+256" + phone[1:]
             logger.debug("Phone normalized local format -> %s", normalized)
             return normalized
 
-        # Already international format
         if re.match(r"^\+256[0-9]{9}$", phone):
             logger.debug("Phone already normalized -> %s", phone)
             return phone
@@ -85,7 +83,7 @@ def get_tokens_for_user(user):
         raise
 
 # =========================================================
-# REGISTER SERIALIZER (FIXED - REMOVED ROLE SELECTION)
+# REGISTER SERIALIZER
 # =========================================================
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -95,8 +93,6 @@ class RegisterSerializer(serializers.ModelSerializer):
     )
     
     token = serializers.SerializerMethodField()
-    
-    # Role is now read-only and will be set to guest_rider by default
     role = serializers.CharField(read_only=True)
 
     class Meta:
@@ -116,22 +112,17 @@ class RegisterSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "token", "role"]
 
     def validate_email(self, value):
-        """Make email required and validate it"""
-        # Email is now required
         if not value:
             raise serializers.ValidationError("Email is required")
         
-        # Clean and validate email
         value = value.lower().strip()
         
-        # Additional email validation using Django's EmailValidator
         email_validator = EmailValidator()
         try:
             email_validator(value)
         except Exception:
             raise serializers.ValidationError("Enter a valid email address")
         
-        # Check if email already exists
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Email already registered")
         
@@ -160,19 +151,13 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         try:
-            # Set role to guest_rider by default
-            # Only allow guest_rider or rider
-            role = validated_data.get("role", "guest_rider")
-            if role not in PUBLIC_ALLOWED_ROLES:
-                role = "guest_rider"
-            
             user = User.objects.create_user(
                 first_name=validated_data["first_name"],
                 last_name=validated_data["last_name"],
                 username=validated_data["username"],
-                email=validated_data["email"],  # Now required
+                email=validated_data["email"],
                 phone_number=validated_data["phone_number"],
-                role=role,  # Always guest_rider or rider
+                role="guest_rider",
                 password=validated_data["password"],
             )
 
@@ -194,7 +179,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return get_tokens_for_user(user)
 
 # =========================================================
-# USER SERIALIZER (SAFE - NO __ALL__)
+# USER SERIALIZER
 # =========================================================
 
 class UserSerializer(serializers.ModelSerializer):
@@ -232,7 +217,6 @@ class DynamicUserSerializer(serializers.ModelSerializer):
             user = getattr(request, "user", None)
 
             if user and user.role not in PRIVILEGED_ROLES:
-                # Remove sensitive fields for non-privileged users
                 sensitive_fields = [
                     "is_active", "role", "failed_login_attempts", 
                     "locked_until", "totp_secret", "is_2fa_enabled",
@@ -251,7 +235,7 @@ class DynamicUserSerializer(serializers.ModelSerializer):
             return data
 
 # =========================================================
-# RIDER SELF UPDATE (FIXED - WITH OTP VERIFICATION)
+# RIDER SELF UPDATE SERIALIZER
 # =========================================================
 
 class RiderSelfUpdateSerializer(serializers.ModelSerializer):
@@ -286,7 +270,6 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         if value:
             value = value.lower().strip()
-            # Validate email format
             email_validator = EmailValidator()
             try:
                 email_validator(value)
@@ -310,7 +293,6 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, data):
-        # If changing phone number, OTP is required
         if data.get('new_phone_number'):
             otp_code = data.get('otp_code')
             if not otp_code:
@@ -318,7 +300,6 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
                     "otp_code": "OTP required to change phone number"
                 })
             
-            # Verify OTP
             from .utils import verify_otp_code
             if not verify_otp_code(data['new_phone_number'], otp_code, 'phone_change'):
                 raise serializers.ValidationError({
@@ -328,13 +309,10 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
         return data
     
     def update(self, instance, validated_data):
-        # Handle phone number change
         if validated_data.get('new_phone_number'):
             instance.phone_number = validated_data['new_phone_number']
-            # Reset verification status - new phone needs re-verification
             instance.is_phone_verified = False
         
-        # Update other fields
         if validated_data.get('username'):
             instance.username = validated_data['username']
         if validated_data.get('email'):
@@ -342,6 +320,20 @@ class RiderSelfUpdateSerializer(serializers.ModelSerializer):
         instance.save()
         
         return instance
+
+# =========================================================
+# ADMIN ROLE UPDATE SERIALIZER
+# =========================================================
+
+class AdminRoleUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['role', 'is_active', 'is_verified', 'is_phone_verified', 'is_email_verified']
+    
+    def validate_role(self, value):
+        if value not in dict(User.ROLE_CHOICES).keys():
+            raise serializers.ValidationError("Invalid role")
+        return value
 
 # =========================================================
 # OTP SEND SERIALIZER
@@ -386,7 +378,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
         return value
 
 # =========================================================
-# PASSWORD RESET CONFIRM SERIALIZER (FIXED)
+# PASSWORD RESET CONFIRM SERIALIZER
 # =========================================================
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
@@ -407,20 +399,6 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
                 "confirm_password": "Passwords do not match"
             })
         return data
-
-# =========================================================
-# ADMIN ROLE UPDATE SERIALIZER
-# =========================================================
-
-class AdminRoleUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ['role', 'is_active', 'is_verified']
-    
-    def validate_role(self, value):
-        if value not in dict(User.ROLE_CHOICES).keys():
-            raise serializers.ValidationError("Invalid role")
-        return value
 
 # =========================================================
 # CHANGE PASSWORD SERIALIZER

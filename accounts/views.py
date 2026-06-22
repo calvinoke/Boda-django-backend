@@ -16,7 +16,6 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
-# Import RefreshToken from SimpleJWT
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User, SystemLog, LoginAttempt, PasswordResetToken
@@ -45,10 +44,6 @@ from .utils import (
     get_user_agent,
 )
 
-# =========================================================
-# LOGGING SETUP
-# =========================================================
-
 logger = logging.getLogger("users")
 logger.setLevel(logging.INFO)
 
@@ -66,7 +61,7 @@ class RegisterRateThrottle(AnonRateThrottle):
     rate = '3/hour'
 
 # =========================================================
-# REGISTER VIEW (FIXED)
+# REGISTER VIEW
 # =========================================================
 
 class RegisterView(generics.CreateAPIView):
@@ -81,16 +76,12 @@ class RegisterView(generics.CreateAPIView):
         
         response = super().create(request, *args, **kwargs)
         
-        # Send verification OTP
         phone = response.data.get('phone_number')
         if phone:
             otp = generate_otp()
             store_otp(phone, otp, 'verification')
-            
-            # Send OTP via task
             send_otp_task.delay(phone, otp, 'verification')
             
-            # Create system log
             user_id = response.data.get('id')
             if user_id:
                 SystemLog.objects.create(
@@ -109,7 +100,7 @@ class RegisterView(generics.CreateAPIView):
         return response
 
 # =========================================================
-# LOGIN VIEW (CUSTOM WITH LOCKOUT)
+# LOGIN VIEW
 # =========================================================
 
 class LoginView(generics.GenericAPIView):
@@ -117,9 +108,6 @@ class LoginView(generics.GenericAPIView):
     throttle_classes = [LoginRateThrottle]
     
     def post(self, request):
-        from rest_framework_simplejwt.views import TokenObtainPairView
-        from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-        
         username = request.data.get('username')
         password = request.data.get('password')
         
@@ -131,11 +119,9 @@ class LoginView(generics.GenericAPIView):
         
         ip_address = get_client_ip(request)
         
-        # Check if user exists
         try:
             user = User.objects.get(Q(username=username) | Q(phone_number=username))
         except User.DoesNotExist:
-            # Log failed attempt
             LoginAttempt.objects.create(
                 phone_number=username if username.startswith('+256') else '',
                 ip_address=ip_address,
@@ -146,18 +132,15 @@ class LoginView(generics.GenericAPIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        # Check if account is locked
         if user.is_locked():
             return Response(
                 {"error": f"Account locked. Try again after {user.locked_until}"},
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Check password
         if not user.check_password(password):
             user.failed_login_attempts += 1
             
-            # Lock account after 5 failed attempts
             if user.failed_login_attempts >= 5:
                 user.lock_account()
                 SystemLog.objects.create(
@@ -181,7 +164,6 @@ class LoginView(generics.GenericAPIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        # Login successful
         user.failed_login_attempts = 0
         user.last_login_ip = ip_address
         user.last_login_device = get_user_agent(request)
@@ -201,7 +183,6 @@ class LoginView(generics.GenericAPIView):
             user_agent=get_user_agent(request)
         )
         
-        # Generate tokens using RefreshToken (now properly imported)
         refresh = RefreshToken.for_user(user)
         
         return Response({
@@ -228,11 +209,9 @@ class LogoutView(generics.GenericAPIView):
         try:
             refresh_token = request.data.get("refresh")
             if refresh_token:
-                # RefreshToken is already imported at the top
                 token = RefreshToken(refresh_token)
                 token.blacklist()
             
-            # Log logout
             SystemLog.objects.create(
                 user=request.user,
                 action="LOGOUT",
@@ -246,7 +225,7 @@ class LogoutView(generics.GenericAPIView):
             return Response({"error": "Logout failed"}, status=400)
 
 # =========================================================
-# USER VIEWSET (FIXED)
+# USER VIEWSET (UPDATED WITH ROLE MANAGEMENT)
 # =========================================================
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -261,29 +240,23 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         
-        # Super admin sees all
         if user.role == "super_admin":
             return User.objects.all()
         
-        # Other privileged roles see all but with limited fields
         if user.role in ["stage_chairman", "stage_secretary", "stage_defense"]:
             return User.objects.all()
         
-        # Riders see only themselves
         if user.role == "rider":
             return User.objects.filter(id=user.id)
         
-        # Guest riders see only themselves
         return User.objects.filter(id=user.id)
 
     def get_serializer_class(self):
         user = self.request.user
         
-        # Riders can update themselves
         if user.role == "rider" and self.action in ["update", "partial_update"]:
             return RiderSelfUpdateSerializer
         
-        # Admins can update roles
         if user.role == "super_admin" and self.action in ["update", "partial_update"]:
             return AdminRoleUpdateSerializer
         
@@ -291,7 +264,6 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @transaction.atomic()
     def update(self, request, *args, **kwargs):
-        # Log role changes
         instance = self.get_object()
         old_role = instance.role
         
@@ -301,7 +273,11 @@ class UserViewSet(viewsets.ModelViewSet):
             SystemLog.objects.create(
                 user=instance,
                 action="ROLE_CHANGED",
-                metadata={"old_role": old_role, "new_role": instance.role},
+                metadata={
+                    "old_role": old_role, 
+                    "new_role": instance.role,
+                    "changed_by": request.user.username
+                },
                 ip_address=get_client_ip(request),
                 user_agent=get_user_agent(request)
             )
@@ -309,19 +285,167 @@ class UserViewSet(viewsets.ModelViewSet):
         return response
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @transaction.atomic()
+    def change_role(self, request, pk=None):
+        """Change user role (Super Admin only)"""
+        user = self.get_object()
+        
+        if request.user.role != "super_admin":
+            return Response(
+                {"error": "Only super admins can change roles"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        new_role = request.data.get('role')
+        if not new_role:
+            return Response(
+                {"error": "Role is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if new_role not in dict(User.ROLE_CHOICES).keys():
+            return Response(
+                {"error": "Invalid role"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_role = user.role
+        user.role = new_role
+        
+        # Auto-verify if promoting to admin
+        if new_role in PRIVILEGED_ROLES:
+            user.is_verified = True
+            user.is_phone_verified = True
+            user.is_email_verified = True
+        
+        user.save(update_fields=['role', 'is_verified', 'is_phone_verified', 'is_email_verified'])
+        
+        SystemLog.objects.create(
+            user=user,
+            action="ROLE_CHANGED",
+            metadata={
+                "old_role": old_role, 
+                "new_role": new_role,
+                "changed_by": request.user.username
+            },
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)
+        )
+        
+        return Response({
+            "message": f"User {user.username} role changed from {old_role} to {new_role}",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role,
+                "is_verified": user.is_verified
+            }
+        })
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @transaction.atomic()
+    def promote(self, request, pk=None):
+        """Promote user to admin role"""
+        user = self.get_object()
+        
+        if request.user.role != "super_admin":
+            return Response(
+                {"error": "Only super admins can promote users"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        new_role = request.data.get('role', 'stage_chairman')
+        
+        if new_role not in PRIVILEGED_ROLES:
+            return Response(
+                {"error": f"Invalid admin role. Choose from: {', '.join(PRIVILEGED_ROLES)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_role = user.role
+        user.role = new_role
+        user.is_verified = True
+        user.is_phone_verified = True
+        user.is_email_verified = True
+        user.save(update_fields=['role', 'is_verified', 'is_phone_verified', 'is_email_verified'])
+        
+        SystemLog.objects.create(
+            user=user,
+            action="ROLE_CHANGED",
+            metadata={
+                "old_role": old_role,
+                "new_role": new_role,
+                "promoted_by": request.user.username
+            },
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)
+        )
+        
+        return Response({
+            "message": f"User {user.username} promoted from {old_role} to {new_role}",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role,
+                "is_verified": user.is_verified
+            }
+        })
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @transaction.atomic()
+    def demote(self, request, pk=None):
+        """Demote user from admin to rider"""
+        user = self.get_object()
+        
+        if request.user.role != "super_admin":
+            return Response(
+                {"error": "Only super admins can demote users"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if user.role == "super_admin":
+            return Response(
+                {"error": "Cannot demote super_admin"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_role = user.role
+        user.role = "rider"
+        user.save(update_fields=['role'])
+        
+        SystemLog.objects.create(
+            user=user,
+            action="ROLE_CHANGED",
+            metadata={
+                "old_role": old_role,
+                "new_role": "rider",
+                "demoted_by": request.user.username
+            },
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)
+        )
+        
+        return Response({
+            "message": f"User {user.username} demoted from {old_role} to rider",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role
+            }
+        })
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def change_password(self, request, pk=None):
         user = self.get_object()
         serializer = ChangePasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Check old password
         if not user.check_password(serializer.validated_data['old_password']):
             return Response(
                 {"error": "Old password is incorrect"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Set new password
         user.set_password(serializer.validated_data['new_password'])
         user.save()
         
@@ -336,7 +460,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response({"message": "Password changed successfully"}, status=200)
 
 # =========================================================
-# OTP SEND VIEW (FIXED)
+# OTP SEND VIEW
 # =========================================================
 
 class OTPSendView(generics.GenericAPIView):
@@ -354,7 +478,6 @@ class OTPSendView(generics.GenericAPIView):
 
         logger.info(f"OTP send request: {phone} for purpose: {purpose}")
 
-        # Check rate limiting by IP and phone
         ip_key = f"ip:{ip_address}"
         if rate_limited(ip_key):
             return Response(
@@ -368,7 +491,6 @@ class OTPSendView(generics.GenericAPIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        # Check if user exists based on purpose
         if purpose in ["password_reset", "verification"]:
             user_exists = User.objects.filter(phone_number=phone).exists()
             if purpose == "password_reset" and not user_exists:
@@ -376,14 +498,9 @@ class OTPSendView(generics.GenericAPIView):
                     {"error": "User not found"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            if purpose == "verification" and not user_exists:
-                # Allow OTP for new users during registration
-                pass
 
         otp = generate_otp()
         store_otp(phone, otp, purpose)
-
-        # Send OTP via Celery
         send_otp_task.delay(phone, otp, purpose)
 
         logger.info(f"OTP sent successfully: {phone}")
@@ -394,7 +511,7 @@ class OTPSendView(generics.GenericAPIView):
         )
 
 # =========================================================
-# OTP VERIFY VIEW (FIXED)
+# OTP VERIFY VIEW
 # =========================================================
 
 class OTPVerifyView(generics.GenericAPIView):
@@ -426,7 +543,6 @@ class OTPVerifyView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Update user verification status
         try:
             user = User.objects.get(phone_number=phone)
             
@@ -434,9 +550,6 @@ class OTPVerifyView(generics.GenericAPIView):
                 user.is_phone_verified = True
                 user.is_verified = True
                 user.save(update_fields=['is_phone_verified', 'is_verified'])
-            elif purpose == "phone_change":
-                # Phone change verification is handled in serializer
-                pass
             
             SystemLog.objects.create(
                 user=user,
@@ -456,7 +569,7 @@ class OTPVerifyView(generics.GenericAPIView):
         )
 
 # =========================================================
-# PASSWORD RESET REQUEST VIEW (FIXED)
+# PASSWORD RESET REQUEST VIEW
 # =========================================================
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -485,7 +598,6 @@ class PasswordResetRequestView(generics.GenericAPIView):
 
         otp = generate_otp()
         store_otp(phone, otp, 'password_reset')
-
         send_otp_task.delay(phone, otp, 'password_reset')
 
         SystemLog.objects.create(
@@ -501,7 +613,7 @@ class PasswordResetRequestView(generics.GenericAPIView):
         )
 
 # =========================================================
-# PASSWORD RESET CONFIRM VIEW (FIXED)
+# PASSWORD RESET CONFIRM VIEW
 # =========================================================
 
 class PasswordResetConfirmView(generics.GenericAPIView):
@@ -573,7 +685,6 @@ class VerifyPhoneView(generics.GenericAPIView):
                 status=200
             )
         
-        # Send verification OTP
         otp = generate_otp()
         store_otp(user.phone_number, otp, 'verification')
         send_otp_task.delay(user.phone_number, otp, 'verification')

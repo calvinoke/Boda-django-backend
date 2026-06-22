@@ -37,8 +37,8 @@ class User(AbstractUser):
     email = models.EmailField(
         unique=True,
         db_index=True,
-        null=True,  # ← Allow null for existing rows
-        blank=True,  # ← Allow blank in forms
+        null=True,
+        blank=True,
         validators=[EmailValidator()]
     )
 
@@ -98,7 +98,7 @@ class User(AbstractUser):
     # =====================================================
 
     USERNAME_FIELD = 'username'
-    REQUIRED_FIELDS = ['phone_number']  # ← Removed email from required fields
+    REQUIRED_FIELDS = ['phone_number']
 
     # =====================================================
     # META
@@ -121,11 +121,9 @@ class User(AbstractUser):
     # =====================================================
 
     def save(self, *args, **kwargs):
-        # normalize username
         if self.username:
             self.username = self.username.strip()
 
-        # normalize email
         if self.email:
             self.email = self.email.lower().strip()
 
