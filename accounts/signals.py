@@ -1,13 +1,14 @@
 import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.conf import settings
-from django.utils import timezone  # ← Add this import
-from django.core.cache import cache  # ← Also import cache at top
+from django.utils import timezone
+from django.core.cache import cache
 from .models import User, SystemLog
+from .tasks import send_welcome_email_task
 
 # Set up logger
 logger = logging.getLogger("accounts.signals")
+
 
 @receiver(post_save, sender=User)
 def auto_promote_first_user(sender, instance, created, **kwargs):
@@ -53,6 +54,7 @@ def auto_promote_first_user(sender, instance, created, **kwargs):
         # Also print for development visibility
         print(f"✅ First user '{instance.username}' automatically promoted to super_admin")
 
+
 @receiver(post_save, sender=User)
 def log_user_creation(sender, instance, created, **kwargs):
     """
@@ -83,6 +85,11 @@ def log_user_creation(sender, instance, created, **kwargs):
                 "phone_number": instance.phone_number
             }
         )
+        
+        # Send welcome email via Celery task
+        if instance.email:
+            send_welcome_email_task.delay(instance.id)
+
 
 @receiver(post_save, sender=User)
 def log_user_update(sender, instance, created, **kwargs):
@@ -91,7 +98,6 @@ def log_user_update(sender, instance, created, **kwargs):
     This is a backup in case the view doesn't capture all changes.
     """
     if not created:
-        # Check if any important fields changed
         try:
             # Get the previous state from the database
             old_instance = User.objects.get(id=instance.id)
@@ -135,8 +141,7 @@ def log_user_update(sender, instance, created, **kwargs):
             
             # If there were changes, log them
             if changes:
-                # Only log if not already logged by the view
-                # We'll check if a recent SystemLog entry exists for this user
+                # Check if a recent SystemLog entry exists for this user
                 recent_logs = SystemLog.objects.filter(
                     user=instance,
                     action__in=['ROLE_CHANGED', 'PASSWORD_CHANGED'],
@@ -175,31 +180,12 @@ def log_user_update(sender, instance, created, **kwargs):
                 }
             )
 
-@receiver(post_save, sender=User)
-def send_welcome_email(sender, instance, created, **kwargs):
-    """
-    Send welcome email to new users (placeholder for future implementation)
-    """
-    if created:
-        # Placeholder for email sending logic
-        # This can be implemented later with Celery tasks
-        logger.info(
-            f"Welcome email would be sent to {instance.email} (not implemented yet)",
-            extra={
-                "user_id": instance.id,
-                "username": instance.username,
-                "email": instance.email
-            }
-        )
-        
-        # TODO: Implement actual email sending
-        # from .tasks import send_welcome_email_task
-        # send_welcome_email_task.delay(instance.id)
 
 @receiver(post_save, sender=User)
 def update_user_cache(sender, instance, created, **kwargs):
     """
-    Invalidate user cache when user is updated
+    Invalidate user cache when user is updated or created.
+    This ensures fresh data is always served.
     """
     # Invalidate the user cache
     cache.delete(f"user_{instance.id}")
@@ -207,6 +193,20 @@ def update_user_cache(sender, instance, created, **kwargs):
     cache.delete(f"user_{instance.username}")
     
     if created:
-        logger.debug(f"Cache invalidated for new user: {instance.username}")
+        logger.debug(
+            f"Cache invalidated for new user: {instance.username}",
+            extra={
+                "user_id": instance.id,
+                "username": instance.username,
+                "action": "cache_invalidate_create"
+            }
+        )
     else:
-        logger.debug(f"Cache invalidated for updated user: {instance.username}")
+        logger.debug(
+            f"Cache invalidated for updated user: {instance.username}",
+            extra={
+                "user_id": instance.id,
+                "username": instance.username,
+                "action": "cache_invalidate_update"
+            }
+        )

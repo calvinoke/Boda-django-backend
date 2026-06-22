@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
-
+from celery.schedules import crontab
 # =========================================================
 # BASE DIRECTORY
 # =========================================================
@@ -270,6 +270,26 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Africa/Kampala'
 CELERY_ENABLE_UTC = False
 
+
+# settings.py - Add to the bottom
+
+# =========================================================
+# CELERY BEAT SCHEDULE
+# =========================================================
+
+CELERY_BEAT_SCHEDULE = {
+    # Delete expired users every day at midnight
+    'delete-expired-users': {
+        'task': 'accounts.tasks.delete_expired_users',
+        'schedule': crontab(hour=0, minute=0),  # Run daily at midnight
+    },
+    # Refresh user cache every hour
+    'refresh-users-cache': {
+        'task': 'accounts.tasks.refresh_users_cache',
+        'schedule': crontab(minute=0, hour='*/1'),  # Run every hour
+    },
+}
+
 # =========================================================
 # CACHE (REDIS) FIXED
 # =========================================================
@@ -320,12 +340,38 @@ LOGGING = {
             'format': '{levelname} {asctime} {module} {message}',
             'style': '{',
         },
+        'json': {
+            'format': '{"level": "%(levelname)s", "time": "%(asctime)s", "module": "%(module)s", "message": "%(message)s"}',
+        },
     },
 
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'logs/accounts.log',
+            'formatter': 'json',
+        },
+    },
+
+    'loggers': {
+        'accounts': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'accounts.signals': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': True,
         },
     },
 
@@ -334,6 +380,36 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# =========================================================
+# EMAIL CONFIGURATION
+# =========================================================
+
+# Email backend settings
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.smtp.EmailBackend'
+)
+
+# SMTP Configuration
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False') == 'True'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
+
+# For development, you can use console backend
+if DEBUG:
+    # Use console backend for development
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    # Use SMTP for production
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
+# Email subject prefix
+EMAIL_SUBJECT_PREFIX = 'Boda App '
 
 # =========================================================
 # SECURITY
@@ -356,29 +432,28 @@ ELASTICSEARCH_DSL = {
     },
 }
 
-#CSRF_COOKIE_SECURE = True ----For production only
-#SESSION_COOKIE_SECURE = True ----For poduction only
-#DEBUG=False --- For production only
+# =========================================================
+# FRONTEND URL (for email links)
+# =========================================================
 
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+FRONTEND_DOMAIN = os.getenv('FRONTEND_DOMAIN', 'localhost:3000')
 
-#Recommended for production:
+# =========================================================
+# PRODUCTION SECURITY (Commented out for now)
+# =========================================================
 
-#SECURE_BROWSER_XSS_FILTER = True
-
-#SECURE_CONTENT_TYPE_NOSNIFF = True
-
-#X_FRAME_OPTIONS = "DENY"
-
-#SECURE_HSTS_SECONDS = 31536000
-
-#SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-
-#SECURE_HSTS_PRELOAD = True
-
-#SECURE_SSL_REDIRECT = True
-
-#SESSION_COOKIE_HTTPONLY = True
-
-#CSRF_COOKIE_HTTPONLY = True
-
-#SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# For production only:
+# CSRF_COOKIE_SECURE = True
+# SESSION_COOKIE_SECURE = True
+# DEBUG = False
+# SECURE_BROWSER_XSS_FILTER = True
+# SECURE_CONTENT_TYPE_NOSNIFF = True
+# X_FRAME_OPTIONS = "DENY"
+# SECURE_HSTS_SECONDS = 31536000
+# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+# SECURE_HSTS_PRELOAD = True
+# SECURE_SSL_REDIRECT = True
+# SESSION_COOKIE_HTTPONLY = True
+# CSRF_COOKIE_HTTPONLY = True
+# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

@@ -30,8 +30,14 @@ from .serializers import (
     OTPSendSerializer,
     AdminRoleUpdateSerializer,
     ChangePasswordSerializer,
+    PRIVILEGED_ROLES,  # ← Add this import
 )
-from .tasks import broadcast_user_event, refresh_users_cache, send_otp_task
+from .tasks import (
+    broadcast_user_event, 
+    refresh_users_cache, 
+    send_otp_task,
+    send_welcome_email_task,  # ← Add this import
+)
 from .utils import (
     generate_otp,
     hash_otp,
@@ -91,6 +97,9 @@ class RegisterView(generics.CreateAPIView):
                     ip_address=get_client_ip(request),
                     user_agent=get_user_agent(request)
                 )
+                
+                # Send welcome email asynchronously
+                send_welcome_email_task.delay(user_id)
         
         logger.info(f"User registered successfully: {response.data.get('username')}")
         
