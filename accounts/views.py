@@ -30,13 +30,13 @@ from .serializers import (
     OTPSendSerializer,
     AdminRoleUpdateSerializer,
     ChangePasswordSerializer,
-    PRIVILEGED_ROLES,  # ← Add this import
+    PRIVILEGED_ROLES,
 )
 from .tasks import (
     broadcast_user_event, 
     refresh_users_cache, 
     send_otp_task,
-    send_welcome_email_task,  # ← Add this import
+    send_welcome_email_task,
 )
 from .utils import (
     generate_otp,
@@ -109,7 +109,7 @@ class RegisterView(generics.CreateAPIView):
         return response
 
 # =========================================================
-# LOGIN VIEW
+# LOGIN VIEW - UPDATED WITH EMAIL SUPPORT
 # =========================================================
 
 class LoginView(generics.GenericAPIView):
@@ -117,22 +117,27 @@ class LoginView(generics.GenericAPIView):
     throttle_classes = [LoginRateThrottle]
     
     def post(self, request):
-        username = request.data.get('username')
+        username_or_email = request.data.get('username')
         password = request.data.get('password')
         
-        if not username or not password:
+        if not username_or_email or not password:
             return Response(
-                {"error": "Username and password required"},
+                {"error": "Username/Email and password required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         ip_address = get_client_ip(request)
         
         try:
-            user = User.objects.get(Q(username=username) | Q(phone_number=username))
+            # Allow login with username, email, or phone number
+            user = User.objects.get(
+                Q(username=username_or_email) | 
+                Q(email=username_or_email) | 
+                Q(phone_number=username_or_email)
+            )
         except User.DoesNotExist:
             LoginAttempt.objects.create(
-                phone_number=username if username.startswith('+256') else '',
+                phone_number=username_or_email if username_or_email.startswith('+256') else '',
                 ip_address=ip_address,
                 success=False
             )
@@ -200,6 +205,7 @@ class LoginView(generics.GenericAPIView):
             "user": {
                 "id": user.id,
                 "username": user.username,
+                "email": user.email,
                 "role": user.role,
                 "is_verified": user.is_verified,
                 "is_phone_verified": user.is_phone_verified,
@@ -234,14 +240,14 @@ class LogoutView(generics.GenericAPIView):
             return Response({"error": "Logout failed"}, status=400)
 
 # =========================================================
-# USER VIEWSET (UPDATED WITH ROLE MANAGEMENT)
+# USER VIEWSET (UPDATED WITH ROLE MANAGEMENT & EMAIL FEATURES)
 # =========================================================
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by("-created_at")
     permission_classes = [IsAuthenticated]
 
-    filterset_fields = ["role", "is_verified", "is_active"]
+    filterset_fields = ["role", "is_verified", "is_active", "is_email_verified"]
     search_fields = ["username", "phone_number", "email"]
     ordering_fields = ["created_at"]
     ordering = ["-created_at"]
@@ -275,9 +281,11 @@ class UserViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
         old_role = instance.role
+        old_email = instance.email
         
         response = super().update(request, *args, **kwargs)
         
+        # Log role changes
         if old_role != instance.role:
             SystemLog.objects.create(
                 user=instance,
@@ -290,6 +298,24 @@ class UserViewSet(viewsets.ModelViewSet):
                 ip_address=get_client_ip(request),
                 user_agent=get_user_agent(request)
             )
+        
+        # Log email changes
+        if old_email != instance.email and instance.email:
+            SystemLog.objects.create(
+                user=instance,
+                action="EMAIL_CHANGED",
+                metadata={
+                    "old_email": old_email,
+                    "new_email": instance.email,
+                    "changed_by": request.user.username
+                },
+                ip_address=get_client_ip(request),
+                user_agent=get_user_agent(request)
+            )
+            
+            # Reset email verification status
+            instance.is_email_verified = False
+            instance.save(update_fields=['is_email_verified'])
         
         return response
     
@@ -467,6 +493,217 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         
         return Response({"message": "Password changed successfully"}, status=200)
+    
+    # =========================================================
+    # EMAIL SEARCH - Admin Only
+    # =========================================================
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def search_by_email(self, request):
+        """Search users by email (Admin only)"""
+        if request.user.role not in ["super_admin", "stage_chairman", "stage_secretary", "stage_defense"]:
+            return Response(
+                {"error": "Permission denied. Admin access required."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        email = request.query_params.get('email')
+        if not email:
+            return Response(
+                {"error": "Email parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(email__iexact=email)
+            serializer = UserSerializer(user)
+            return Response(serializer.data)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found with this email"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    # =========================================================
+    # EMAIL UPDATE - Admin Only
+    # =========================================================
+    
+    @action(detail=False, methods=['patch'], permission_classes=[IsAuthenticated])
+    def update_by_email(self, request):
+        """Update user by email (Admin only)"""
+        if request.user.role != "super_admin":
+            return Response(
+                {"error": "Only super admins can update users by email"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        email = request.data.get('email')
+        if not email:
+            return Response(
+                {"error": "Email is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(email__iexact=email)
+            serializer = AdminRoleUpdateSerializer(user, data=request.data, partial=True)
+            if serializer.is_valid():
+                old_role = user.role
+                serializer.save()
+                
+                # Log the update
+                SystemLog.objects.create(
+                    user=user,
+                    action="OTHER",
+                    metadata={
+                        "updated_by": request.user.username,
+                        "updated_fields": list(request.data.keys())
+                    },
+                    ip_address=get_client_ip(request),
+                    user_agent=get_user_agent(request)
+                )
+                
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found with this email"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    # =========================================================
+    # EMAIL VERIFICATION ENDPOINTS
+    # =========================================================
+    
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def verify_email(self, request):
+        """Request email verification (send OTP to email)"""
+        user = request.user
+        
+        if user.is_email_verified:
+            return Response(
+                {"message": "Email already verified"},
+                status=status.HTTP_200_OK
+            )
+        
+        if not user.email:
+            return Response(
+                {"error": "No email address associated with this account"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Generate OTP for email verification
+        otp = generate_otp()
+        store_otp(user.email, otp, 'email_verification')
+        
+        # Send OTP via email
+        from .tasks import send_otp_email_task
+        send_otp_email_task.delay(user.id, otp, 'email_verification')
+        
+        SystemLog.objects.create(
+            user=user,
+            action="OTP_SENT",
+            metadata={"purpose": "email_verification"},
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)
+        )
+        
+        return Response(
+            {"message": "Verification OTP sent to your email"},
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def confirm_email_verification(self, request):
+        """Confirm email verification with OTP"""
+        user = request.user
+        otp_code = request.data.get('otp_code')
+        
+        if not otp_code:
+            return Response(
+                {"error": "OTP code is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if user.is_email_verified:
+            return Response(
+                {"message": "Email already verified"},
+                status=status.HTTP_200_OK
+            )
+        
+        if not user.email:
+            return Response(
+                {"error": "No email address associated with this account"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify OTP
+        if not verify_otp_code(user.email, otp_code, 'email_verification'):
+            return Response(
+                {"error": "Invalid or expired OTP"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Mark email as verified
+        user.is_email_verified = True
+        user.save(update_fields=['is_email_verified'])
+        
+        SystemLog.objects.create(
+            user=user,
+            action="EMAIL_VERIFIED",
+            metadata={"email": user.email},
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)
+        )
+        
+        return Response(
+            {"message": "Email verified successfully"},
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def resend_email_verification(self, request, pk=None):
+        """Resend email verification OTP (Admin or Self)"""
+        user = self.get_object()
+        
+        # Check permission (self or admin)
+        if request.user.id != user.id and request.user.role != "super_admin":
+            return Response(
+                {"error": "Permission denied"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if user.is_email_verified:
+            return Response(
+                {"message": "Email already verified"},
+                status=status.HTTP_200_OK
+            )
+        
+        if not user.email:
+            return Response(
+                {"error": "No email address associated with this account"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Generate and send OTP
+        otp = generate_otp()
+        store_otp(user.email, otp, 'email_verification')
+        
+        from .tasks import send_otp_email_task
+        send_otp_email_task.delay(user.id, otp, 'email_verification')
+        
+        SystemLog.objects.create(
+            user=user,
+            action="OTP_SENT",
+            metadata={"purpose": "email_verification_resend"},
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)
+        )
+        
+        return Response(
+            {"message": "Verification OTP resent to your email"},
+            status=status.HTTP_200_OK
+        )
 
 # =========================================================
 # OTP SEND VIEW

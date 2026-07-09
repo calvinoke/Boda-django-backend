@@ -94,11 +94,11 @@ class User(AbstractUser):
     last_login_device = models.CharField(max_length=255, null=True, blank=True)
 
     # =====================================================
-    # AUTH CONFIG
+    # AUTH CONFIG - EMAIL IS NOW REQUIRED FOR SUPERUSER
     # =====================================================
 
     USERNAME_FIELD = 'username'
-    REQUIRED_FIELDS = ['phone_number']
+    REQUIRED_FIELDS = ['phone_number', 'email']  # ← ADDED EMAIL HERE
 
     # =====================================================
     # META
@@ -117,23 +117,32 @@ class User(AbstractUser):
         swappable = 'AUTH_USER_MODEL'
 
     # =====================================================
-    # SAVE HOOK (safe logging)
+    # SAVE HOOK (safe logging) - FIXED FOR EMPTY EMAIL
     # =====================================================
 
     def save(self, *args, **kwargs):
+        # Normalize username
         if self.username:
             self.username = self.username.strip()
 
-        if self.email:
+        # Normalize email - convert empty string to None to avoid unique constraint issues
+        if self.email == '':
+            self.email = None
+        elif self.email:
             self.email = self.email.lower().strip()
+
+        # Ensure phone number is set
+        if not self.phone_number:
+            logger.warning(f"User {self.username} has no phone number")
 
         super().save(*args, **kwargs)
 
         logger.info(
-            "User saved | id=%s | username=%s | role=%s",
+            "User saved | id=%s | username=%s | role=%s | email=%s",
             self.id,
             self.username,
-            self.role
+            self.role,
+            self.email
         )
 
     # =====================================================

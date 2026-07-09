@@ -3,6 +3,7 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 from celery.schedules import crontab
+
 # =========================================================
 # BASE DIRECTORY
 # =========================================================
@@ -147,7 +148,7 @@ DATABASES = {
         'NAME': os.getenv('DB_NAME'),
         'USER': os.getenv('DB_USER'),
         'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'HOST': os.getenv('DB_HOST', 'db'),
         'PORT': os.getenv('DB_PORT', '5432'),
 
         # PERFORMANCE
@@ -270,9 +271,6 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Africa/Kampala'
 CELERY_ENABLE_UTC = False
 
-
-# settings.py - Add to the bottom
-
 # =========================================================
 # CELERY BEAT SCHEDULE
 # =========================================================
@@ -328,8 +326,16 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # =========================================================
-# LOGGING
+# LOGGING - FIXED (Auto-create logs directory)
 # =========================================================
+
+# Create logs directory if it doesn't exist
+LOG_DIR = BASE_DIR / 'logs'
+if not LOG_DIR.exists():
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass  # Ignore if can't create directory (e.g., permissions)
 
 LOGGING = {
     'version': 1,
@@ -337,11 +343,16 @@ LOGGING = {
 
     'formatters': {
         'verbose': {
-            'format': '{levelname} {asctime} {module} {message}',
+            'format': '[{levelname}] {asctime} {module} - {message}',
             'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
         },
         'json': {
             'format': '{"level": "%(levelname)s", "time": "%(asctime)s", "module": "%(module)s", "message": "%(message)s"}',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
         },
     },
 
@@ -349,11 +360,20 @@ LOGGING = {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'level': 'INFO',
         },
+        # File handler with fallback - only if directory exists
         'file': {
             'class': 'logging.FileHandler',
-            'filename': 'logs/accounts.log',
-            'formatter': 'json',
+            'filename': str(LOG_DIR / 'accounts.log') if LOG_DIR.exists() else 'accounts.log',
+            'formatter': 'verbose',
+            'level': 'INFO',
+        },
+        'error_file': {
+            'class': 'logging.FileHandler',
+            'filename': str(LOG_DIR / 'errors.log') if LOG_DIR.exists() else 'errors.log',
+            'formatter': 'verbose',
+            'level': 'ERROR',
         },
     },
 
@@ -368,15 +388,50 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'accounts.email': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'accounts.tasks': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'accounts.utils': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'accounts.serializers': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'accounts.views': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'django': {
-            'handlers': ['console'],
+            'handlers': ['console', 'error_file'],
             'level': 'ERROR',
             'propagate': True,
+        },
+        'django.db.backends': {
+            'handlers': ['console', 'error_file'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console', 'error_file'],
+            'level': 'ERROR',
+            'propagate': False,
         },
     },
 
     'root': {
-        'handlers': ['console'],
+        'handlers': ['console', 'file'],
         'level': 'INFO',
     },
 }

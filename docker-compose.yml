@@ -1,23 +1,29 @@
-version: "3.9"
+# docker-compose.yml (Updated - removed version)
 
 services:
-
   # =====================================================
   # DJANGO APP
-  # =====================================================
+  # =======g==============================================
   web:
     build: .
     container_name: django_web
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
     ports:
       - "8000:8000"
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
 
   # =====================================================
   # POSTGRES DATABASE
@@ -25,23 +31,38 @@ services:
   db:
     image: postgres:15
     container_name: postgres_db
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 60s          # Increase from default
+      retries: 10           # Increase from default
+      start_period: 120s
+    networks:
+      - app_network
 
   # =====================================================
   # REDIS
   # =====================================================
   redis:
-    image: redis:7
+    image: redis:7-alpine
     container_name: redis_cache
-    restart: always
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
 
   # =====================================================
   # CELERY WORKER
@@ -49,14 +70,19 @@ services:
   celery:
     build: .
     container_name: celery_worker
-    command: celery -A config worker -l info
+    command: celery -A config worker -l info --concurrency=4
     volumes:
       - .:/app
     env_file:
       - .env
     depends_on:
-      - redis
-      - db
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
 
   # =====================================================
   # CELERY BEAT
@@ -64,14 +90,43 @@ services:
   celery-beat:
     build: .
     container_name: celery_beat
-    command: celery -A config beat -l info
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - .:/app
     env_file:
       - .env
     depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
+
+  # =====================================================
+  # FLOWER (Celery Monitoring)
+  # =====================================================
+  flower:
+    build: .
+    container_name: celery_flower
+    command: celery -A config flower --port=5555
+    ports:
+      - "5555:5555"
+    env_file:
+      - .env
+    depends_on:
+      - celery
       - redis
-      - db
+    networks:
+      - app_network
+    restart: unless-stopped
+
+networks:
+  app_network:
+    driver: bridge
 
 volumes:
   pgdata:
+  static_volume:
+  media_volume:
